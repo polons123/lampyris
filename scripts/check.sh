@@ -13,6 +13,6 @@ for f in Sources/Lampyris/Resources/*.js; do
 done
 # В DOM-коде страницы не должно быть append/prepend с несколькими аргументами: Lampa подменяет их версией с одним аргументом.
 if grep -n -E "\.(append|prepend)\([^()]*,[^()]*\)" Sources/Lampyris/Resources/mpvTube.js | grep -v '\$(' | grep -v 'window\.\$' | grep -v "append(make(a), make(b))"; then
-  echo "ОШИБКА: append/prepend с несколькими аргументами (см. CLAUDE.md)" >&2; fail=1
+  echo "ОШИБКА: append/prepend с несколькими аргументами (см. docs/ARCHITECTURE.md)" >&2; fail=1
 fi
 exit $fail

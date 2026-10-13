@@ -26,7 +26,7 @@ scripts/build-app.sh x86_64     # Intel
 brew install mpv        # библиотека для swift run; для сборки .app Homebrew не нужен
 cd lampyris && swift run
 ```
-Адрес сервера Lampa берётся из `LAMPA_URL`, затем из настроек, иначе будет спрошен. Подробности и переменные отладки — в [CLAUDE.md](CLAUDE.md).
+Адрес сервера Lampa берётся из `LAMPA_URL`, затем из настроек, иначе будет спрошен. Устройство приложения, переменные отладки и ограничения — в [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Тесты и проверки
 ```
