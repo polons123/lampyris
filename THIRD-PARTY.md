@@ -1,0 +1,26 @@
+# Сторонние компоненты и сервисы (Lampyris)
+
+Сам lampyris распространяется на условиях GNU GPL версии 3 или (на ваш выбор) более поздней (GPL-3.0-or-later), см. [LICENSE](LICENSE).
+
+## Библиотеки, входящие в сборку `.app`
+В `Lampyris.app/Contents/Frameworks` лежат готовые динамические библиотеки mpv, собранные проектом IINA (https://iina.io/dylibs) отдельно под каждую архитектуру (arm64 и x86_64, целевая macOS 11). Их список и контрольные суммы SHA-256 зафиксированы в `scripts/libs-arm64.sha256` и `scripts/libs-x86_64.sha256`: сборка `.app` не пройдёт при несовпадении. Исходники версий и сценарии сборки: https://github.com/iina/deps-buildscripts (`versions.env`, `patches`), исходники самих библиотек у их авторов по ссылкам в `versions.env`.
+
+| Компонент | Версия | Лицензия |
+| --- | --- | --- |
+| mpv / libmpv | 0.41.0 | GPL-2.0-or-later (сборка с GPL; часть компонентов LGPL-2.1-or-later) |
+| FFmpeg (libavcodec, libavformat, libavfilter, libavdevice, libavutil, libswscale, libswresample) | 9.0.2, `--enable-gpl --enable-version3` | GPL-3.0-or-later |
+| libplacebo | 7.360.1 | LGPL-2.1-or-later |
+| librubberband | 3.x | GPL-2.0-or-later |
+| libass, libbluray, libudfread, libsoxr, libfribidi, libunibreak, libuchardet, libarchive | см. `versions.env` | ISC, LGPL-2.1-or-later, BSD, MPL/GPL/LGPL и др. |
+| libdav1d, libSvtAv1Enc, libjxl, libwebp, libzimg, liblcms2, libharfbuzz, libfreetype, libfontconfig, libjpeg-turbo, libspeex, libvorbis, libogg, libbs2b, libbrotli, liblz4, libzstd, libluajit, libmujs | см. `versions.env` | BSD, MIT, FTL/GPLv2, WTFPL, zlib и др. (разрешительные) |
+
+Итоговое сочетание GPL-2.0+ и GPL-3.0+ допустимо при распространении под GPL-3.0-or-later. Тексты лицензий отдельных библиотек находятся в их исходных пакетах.
+
+## Исходный код
+Тем, кому вы передаёте сборку `.app`, исходный код приложения должен быть доступен (требование GPL). Репозиторий: https://github.com/polons123/lampyris — на момент выбора лицензии он приватный: перед раздачей либо сделайте его публичным, либо передавайте исходники вместе со сборкой или по запросу. Исходный код mpv и FFmpeg доступен на https://github.com/mpv-player/mpv и https://ffmpeg.org (версии указаны в таблице).
+
+## Внешние сервисы (не входят в сборку)
+- **TMDB** (названия серий, идентификаторы IMDb, постеры): доступ через ключ и настройки самой Lampa. Требование TMDB: «This product uses the TMDB API but is not endorsed or certified by TMDB.»
+- **TheIntroDB** (таймкоды заставок и титров): https://theintrodb.org, используется только открытый API, без их кода.
+- **Stremio OpenSubtitles v3 / OpenSubtitles** (субтитры): аддон https://opensubtitles-v3.strem.io; субтитры принадлежат их авторам.
+- **Lampa** (интерфейс): загружается с вашего сервера, в приложение не входит.

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>ru</string>
+    <key>CFBundleExecutable</key><string>Lampyris</string>
+    <key>CFBundleIconFile</key><string>Lampyris</string>
+    <key>CFBundleIdentifier</key><string>io.github.polons123.lampyris</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>Lampyris</string>
+    <key>CFBundleDisplayName</key><string>Lampyris</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>@VERSION@</string>
+    <key>CFBundleVersion</key><string>@BUILD@</string>
+    <key>LSMinimumSystemVersion</key><string>13.0</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.video</string>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <!-- На MacBook с двумя видеокартами не включать дискретную без необходимости. -->
+    <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+    <!-- Сервер Lampa часто доступен по http в локальной сети, а плагины ходят на разные адреса. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key><true/>
+        <key>NSAllowsLocalNetworking</key><true/>
+    </dict>
+    <key>NSLocalNetworkUsageDescription</key><string>Lampyris подключается к вашему серверу Lampa в локальной сети.</string>
+    <key>NSHumanReadableCopyright</key><string>© polons123. GNU GPL версии 3 или новее.</string>
+</dict>
+</plist>
