@@ -1,6 +1,7 @@
 import CMpv
 import Foundation
 import WebKit
+import LampyrisCore
 
 /// Мост JS ↔ mpv. Страница вызывает `webkit.messageHandlers.mpv.postMessage({m, a})`,
 /// ответ приходит промисом; события mpv уходят в `window.__mpvEvent(...)`.

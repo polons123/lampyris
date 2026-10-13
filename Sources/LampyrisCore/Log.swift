@@ -1,7 +1,7 @@
 import Foundation
 import os
 
-enum LogLevel: String, Sendable {
+public enum LogLevel: String, Sendable {
     case info = "INFO", warn = "WARN", error = "ERROR"
 }
 
@@ -11,7 +11,7 @@ enum LogLevel: String, Sendable {
 ///   статистика), и всё записывается в ~/Library/Logs/Lampyris/lampa.log с ротацией. В файл адреса сокращаются до хоста:
 ///   в ссылках бывают ключи и токены.
 /// - LAMPA_DEBUG=1: подробный режим плюс вывод в стандартный вывод (для запуска из терминала).
-enum Log {
+public enum Log {
     private static let logger = Logger(subsystem: "io.github.polons123.lampyris", category: "app")
     private static let queue = DispatchQueue(label: "io.github.polons123.lampyris.log")
     private static let defaultsKey = "verboseLog"
@@ -20,20 +20,20 @@ enum Log {
     private static let maxBytes = 2_000_000
     private static let keepFiles = 3
 
-    static var isVerbose: Bool { debugEnv || verboseFlag.withLock { $0 } }
-    static var isVerboseSetting: Bool { verboseFlag.withLock { $0 } }
+    public static var isVerbose: Bool { debugEnv || verboseFlag.withLock { $0 } }
+    public static var isVerboseSetting: Bool { verboseFlag.withLock { $0 } }
 
-    static var folderURL: URL {
+    public static var folderURL: URL {
         FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0].appendingPathComponent("Logs/Lampyris", isDirectory: true)
     }
 
-    static func setVerbose(_ on: Bool) {
+    public static func setVerbose(_ on: Bool) {
         verboseFlag.withLock { $0 = on }
         UserDefaults.standard.set(on, forKey: defaultsKey)
         if on { log(.info, "app", "подробный журнал включён (в файле адреса сокращены до хоста)") }
     }
 
-    static func log(_ level: LogLevel, _ category: String, _ message: String, verboseOnly: Bool = false) {
+    public static func log(_ level: LogLevel, _ category: String, _ message: String, verboseOnly: Bool = false) {
         let verbose = isVerbose
         if verboseOnly && !verbose { return }
         if debugEnv { print("[\(category)] \(message)") }

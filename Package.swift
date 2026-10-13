@@ -11,9 +11,12 @@ let package = Package(
     targets: [
         // libmpv из Homebrew (/opt/homebrew), заголовки подключены через module map.
         .systemLibrary(name: "CMpv"),
+        // Логика без UI и без libmpv (разбор mpv.conf, журнал): отдельная цель, чтобы её можно было тестировать.
+        .target(name: "LampyrisCore"),
+        .testTarget(name: "LampyrisCoreTests", dependencies: ["LampyrisCore"]),
         .executableTarget(
             name: "Lampyris",
-            dependencies: ["CMpv"],
+            dependencies: ["CMpv", "LampyrisCore"],
             resources: [.copy("Resources/mpvTube.js"), .copy("Resources/playbackCover.js")],
             linkerSettings: [
                 .unsafeFlags([

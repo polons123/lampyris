@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Тесты и проверки
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Версии
+        run: |
+          sw_vers
+          swift --version
+          xcodebuild -version
+      - name: Проверки скриптов и JS
+        run: scripts/check.sh
+      - name: Тесты
+        run: swift test
+
+  build:
+    name: Сборка ${{ matrix.arch }}
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+          - arch: x86_64
+            runner: macos-26-intel
+    steps:
+      - uses: actions/checkout@v4
+      - name: Сборка Lampyris.app
+        run: scripts/build-app.sh ${{ matrix.arch }}
+      - name: Дымовой запуск (воспроизведение тестового видео, не блокирует)
+        continue-on-error: true
+        run: |
+          APP="dist/${{ matrix.arch }}/Lampyris.app"
+          LAMPA_MPV_TEST='av://lavfi:testsrc=duration=8:size=320x180:rate=25' "$APP/Contents/MacOS/Lampyris" > smoke.log 2>&1 &
+          PID=$!
+          sleep 9
+          kill $PID 2>/dev/null || true
+          cat smoke.log
+          grep -q "video-codec" smoke.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lampyris-${{ matrix.arch }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: Публикация релиза
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Контрольные суммы и релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          shasum -a 256 *.dmg *.zip > SHA256SUMS.txt
+          gh release create "${{ github.ref_name }}" *.dmg *.zip SHA256SUMS.txt --repo "${{ github.repository }}" --generate-notes

@@ -2,27 +2,27 @@ import Foundation
 
 /// Пользовательский mpv.conf: общие опции и профили `[имя]`. Файл лежит в
 /// ~/Library/Application Support/Lampyris/ и меняется только пользователем.
-struct MpvConfig {
-    struct Entry {
-        let name: String
-        let value: String
+public struct MpvConfig {
+    public struct Entry: Equatable {
+        public let name: String
+        public let value: String
         /// Суффикс списка: add, append, set, pre, clr, remove.
-        let op: String?
+        public let op: String?
     }
 
-    struct Ignored {
-        let line: Int
-        let text: String
-        let reason: String
+    public struct Ignored: Equatable {
+        public let line: Int
+        public let text: String
+        public let reason: String
     }
 
-    var global: [Entry] = []
-    var profiles: [String: [Entry]] = [:]
+    public var global: [Entry] = []
+    public var profiles: [String: [Entry]] = [:]
     /// Имена профилей в порядке появления в файле.
-    var profileNames: [String] = []
-    var ignored: [Ignored] = []
+    public var profileNames: [String] = []
+    public var ignored: [Ignored] = []
 
-    static let maxBytes = 64 * 1024
+    public static let maxBytes = 64 * 1024
 
     /// Опции, которые запускают код, читают чужие файлы или ломают встроенный рендер.
     /// `profile` запрещён: профили выбираются настройкой приложения, а не из файла.
@@ -39,16 +39,16 @@ struct MpvConfig {
 
     private static let listOps: Set<String> = ["add", "append", "set", "pre", "clr", "remove"]
 
-    static var fileURL: URL {
+    public static var fileURL: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("Lampyris", isDirectory: true).appendingPathComponent("mpv.conf")
     }
 
-    static func readText() -> String {
+    public static func readText() -> String {
         (try? String(contentsOf: fileURL, encoding: .utf8)) ?? ""
     }
 
-    static func writeText(_ text: String) throws {
+    public static func writeText(_ text: String) throws {
         if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             try? FileManager.default.removeItem(at: fileURL)
             return
@@ -57,14 +57,14 @@ struct MpvConfig {
         try (text.hasSuffix("\n") ? text : text + "\n").write(to: fileURL, atomically: true, encoding: .utf8)
     }
 
-    static func load() -> MpvConfig { parse(readText()) }
+    public static func load() -> MpvConfig { parse(readText()) }
 
     /// Все записи применяемого набора: общие, затем выбранного профиля.
-    func entries(profile: String?) -> [Entry] {
+    public func entries(profile: String?) -> [Entry] {
         global + (profile.flatMap { profiles[$0] } ?? [])
     }
 
-    static func parse(_ text: String) -> MpvConfig {
+    public static func parse(_ text: String) -> MpvConfig {
         var cfg = MpvConfig()
         var section: String?  // nil — общие опции
         var sectionOK = true

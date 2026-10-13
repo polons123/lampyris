@@ -2,6 +2,7 @@ import AppKit
 import CMpv
 import IOKit.pwr_mgt
 import OpenGL.GL3
+import LampyrisCore
 
 private func glGetProcAddress(_ ctx: UnsafeMutableRawPointer?, _ name: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? {
     guard let name else { return nil }

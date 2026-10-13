@@ -1,5 +1,6 @@
 import AppKit
 import CMpv
+import LampyrisCore
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {

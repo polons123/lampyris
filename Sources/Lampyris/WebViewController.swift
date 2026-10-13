@@ -1,5 +1,6 @@
 import AppKit
 import WebKit
+import LampyrisCore
 
 @MainActor
 final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
