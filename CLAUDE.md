@@ -5,7 +5,7 @@
 
 ## Окружение
 - Xcode установлен (/Applications/Xcode.app), Swift 6.4, arm64. Если `xcode-select -p` показывает /Library/Developer/CommandLineTools, `xcodebuild` не работает и `ld` предупреждает о ненайденных путях поиска; лечится `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
-- libmpv 0.41 из Homebrew: заголовки /opt/homebrew/include/mpv/ (client.h, render.h, render_gl.h), библиотека /opt/homebrew/lib/libmpv.dylib.
+- libmpv 0.41: для swift run берётся из Homebrew (/opt/homebrew/lib, переопределяется LAMPA_LIBS); заголовки клиентского API лежат в проекте (Sources/CMpv/mpv, лицензия ISC). Для .app используются библиотеки IINA, см. раздел «Сборка .app».
 - Сборка/запуск: Swift Package (`swift build`, `swift run`). Xcode нужен для .app, иконки и подписи.
 - Рендер: libmpv render API умеет только OpenGL и software (проверено на 0.41), поэтому предупреждения OpenGL deprecated остаются. Встраивание через `--wid` + `gpu-next`/`macvk` на macOS не работает (mpv открывает своё окно), проверено прототипом.
 
@@ -17,12 +17,18 @@
 - src/modules/mpvConfig.js: разбор mpv.conf, список BLOCKED опций.
 - Профиль Lampa (адрес сервера и т.п.): ~/Library/Application Support/Lampa/ — не копировать в репозиторий.
 
-## План
-1. Каркас: `swift package init --type executable` в этой папке, AppKit (NSWindow/NSView).
-2. Окно с WKWebView на адрес сервера Lampa. Главный риск: насколько корректно Lampa работает в WebKit (проверять первым).
-3. libmpv как system library (module map, линковка на /opt/homebrew), тестовое воспроизведение, рендер через OpenGL/Metal-слой под или над веб-видом.
-4. Мост: внедряемый скрипт + WKScriptMessageHandler, портировать mpvTube.js.
-5. Профили mpv и редактор mpv.conf сделаны. Загрузки не делаем. Дальше: сборка .app и выбор лицензии.
+## Состояние и план
+Сделано: окно с WKWebView, libmpv (OpenGL), мост и тюб для Lampa.PlayerVideo, профили и mpv.conf, клавиши плеера, статистика, скриншот, пропуск заставок, субтитры из интернета, медиаклавиши, журнал, сборка .app под arm64 и Intel, тесты и CI, лицензия GPL-3.0-or-later. Загрузки видео (yt-dlp/curl) не делаем (решение владельца).
+Осталось: пробный релиз (тег v0.1.0), перед публикацией репозитория разделить этот файл на документацию для людей (docs/) и инструкции для ассистента и решить, когда открывать репозиторий; проверка Intel-сборки на настоящем Mac с Intel (CI запускает её на Intel-раннере без звука и видеоускорения); не проверено вручную: автоповтор при реальном обрыве, статистика торрента, Dolby Vision, профили DTS-HD и Atmos, обложка при ошибке, клавиши ⏯ и «Сейчас играет».
+
+## Структура пакета и тесты
+- Sources/CMpv — системная библиотека (module map, заголовки mpv 0.41).
+- Sources/LampyrisCore — логика без UI и libmpv: MpvConfig (разбор mpv.conf, профили, список запрещённых опций), Log (журнал, сокращение адресов).
+- Sources/Lampyris — приложение (AppKit, WebKit, мост, плеер) и Resources (mpvTube.js, playbackCover.js).
+- Tests/LampyrisCoreTests — Swift Testing: MpvConfigTests, LogTests. Запуск `swift test` (нужны библиотеки: Homebrew или LAMPA_LIBS). Остальной код (мост, плеер, JS) автотестами не покрыт; JS проверяется на синтаксис `scripts/check.sh`.
+
+## CI (.github/workflows/ci.yml)
+Задачи: test (macos-latest: scripts/check.sh и swift test с библиотеками IINA arm64), build (matrix arm64 на macos-latest и x86_64 на macos-26-intel: scripts/build-app.sh, дымовой запуск с `LAMPA_MPV_TEST='av://lavfi:testsrc=…'`, артефакты), release (по тегу v*: gh release create с SHA256SUMS). На раннерах Swift 6.3.x (Xcode 26.6), а не 6.4: код должен собираться и на нём (коротким замыканиям `MainActor.assumeIsolated { … }` нужен явный `_ =`, если результат не нужен). На виртуальных машинах нет ускоренного OpenGL: MpvVideoView при отсутствии ускоренного формата берёт программный. У gh для пуша workflow нужен scope `workflow`. Минуты macOS в приватном репозитории платные: не гонять CI без необходимости.
 
 ## Внедряемые скрипты (Sources/Lampyris/Resources, подключаются в WebViewController и Package.swift)
 - mpvTube.js: тюб mpv для Lampa.PlayerVideo, строка формата в шапке (fps, SDR/HDR/Dolby Vision, аудио), запоминание озвучки и субтитров по сериалу (localStorage `mpv_track_prefs`, id сериала из Lampa.Activity.active(): онлайн-плагины не передают card), убирает «MPV» из списков внешних плееров (player, player_iptv, player_torrent) и подписывает «Встроенный» как «Встроенный (MPV)».
