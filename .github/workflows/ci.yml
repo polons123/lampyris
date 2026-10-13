@@ -57,6 +57,8 @@ jobs:
           sleep 9
           kill $PID 2>/dev/null || true
           cat smoke.log
+          # При падении показываем начало отчёта о сбое, чтобы понять причину на раннере.
+          for r in $(ls -t ~/Library/Logs/DiagnosticReports/Lampyris* 2>/dev/null | head -1); do echo "--- $r"; head -70 "$r"; done
           grep -q "video-codec" smoke.log
       - uses: actions/upload-artifact@v4
         with:

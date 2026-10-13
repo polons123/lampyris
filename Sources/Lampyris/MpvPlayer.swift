@@ -37,11 +37,18 @@ final class MpvVideoView: NSOpenGLView {
     fileprivate var renderContext: OpaquePointer?
 
     init(videoFrame frame: NSRect) {
-        let attrs: [NSOpenGLPixelFormatAttribute] = [
-            UInt32(NSOpenGLPFAOpenGLProfile), UInt32(NSOpenGLProfileVersion3_2Core),
-            UInt32(NSOpenGLPFADoubleBuffer), UInt32(NSOpenGLPFAAccelerated), 0,
-        ]
-        let format = NSOpenGLPixelFormat(attributes: attrs)!
+        // Сначала ускоренный формат; на виртуальных машинах (например, раннеры CI) его может не быть — тогда программный.
+        func pixelFormat(accelerated: Bool) -> NSOpenGLPixelFormat? {
+            var attrs: [NSOpenGLPixelFormatAttribute] = [
+                UInt32(NSOpenGLPFAOpenGLProfile), UInt32(NSOpenGLProfileVersion3_2Core), UInt32(NSOpenGLPFADoubleBuffer),
+            ]
+            if accelerated { attrs.append(UInt32(NSOpenGLPFAAccelerated)) }
+            attrs.append(0)
+            return NSOpenGLPixelFormat(attributes: attrs)
+        }
+        guard let format = pixelFormat(accelerated: true) ?? pixelFormat(accelerated: false) else {
+            fatalError("Не удалось создать формат пикселей OpenGL 3.2")
+        }
         super.init(frame: frame, pixelFormat: format)!
         wantsBestResolutionOpenGLSurface = true
         var swap: GLint = 1
