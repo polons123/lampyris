@@ -5,7 +5,7 @@
 An unofficial native [Lampa](https://github.com/yumata/lampa) client for macOS (Apple Silicon and Intel). Lampa is a project of its own authors; Lampyris is not affiliated with it and is not supported by it. The app is written in Swift/AppKit, with a WKWebView and playback through libmpv.
 
 ## Features
-- mpv instead of the built-in player: hardware decoding, HDR/Dolby Vision, AC3/DTS, profiles and `mpv.conf` with an editor.
+- mpv instead of the built-in player: hardware decoding, AC3/DTS, profiles and `mpv.conf` with an editor.
 - Resume playback, per-series memory of audio and subtitle tracks, automatic retry on network drops.
 - Skipping intros and credits using TheIntroDB timestamps, subtitles from the internet (Russian and English).
 - Player hotkeys (help on `H`), statistics (`I`), screenshot (`S`), media keys and "Now Playing".
