@@ -189,7 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     }
                 }
                 Timer.scheduledTimer(withTimeInterval: 4.0, repeats: false) { _ in
-                    MainActor.assumeIsolated { p.set("pause", "yes") }
+                    MainActor.assumeIsolated { _ = p.set("pause", "yes") }
                 }
                 Timer.scheduledTimer(withTimeInterval: 7.0, repeats: false) { _ in
                     MainActor.assumeIsolated { print("[mpv] nowplaying после паузы: \(np.debugDescription)") }
@@ -206,7 +206,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // LAMPA_MPV_PROFILE2: через 6 с применить другой профиль на лету (проверка сброса опций).
             if let second = ProcessInfo.processInfo.environment["LAMPA_MPV_PROFILE2"] {
                 Timer.scheduledTimer(withTimeInterval: 6.0, repeats: false) { _ in
-                    MainActor.assumeIsolated { p.applyConfig(profile: second.isEmpty ? nil : second) }
+                    MainActor.assumeIsolated { _ = p.applyConfig(profile: second.isEmpty ? nil : second) }
                 }
             }
             for delay in [3.0, 9.0] {
