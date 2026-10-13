@@ -24,7 +24,12 @@ jobs:
           xcodebuild -version
       - name: Проверки скриптов и JS
         run: scripts/check.sh
+      # swift test собирает весь пакет, в том числе приложение, поэтому для линковки нужны библиотеки mpv.
+      - name: Библиотеки mpv (arm64)
+        run: scripts/fetch-libs.sh arm64
       - name: Тесты
+        env:
+          LAMPA_LIBS: ${{ github.workspace }}/build/libs/arm64
         run: swift test
 
   build:
