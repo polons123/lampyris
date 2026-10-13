@@ -1,5 +1,7 @@
 # Lampyris
 
+**Русский** | [English](README.en.md)
+
 Неофициальный нативный клиент [Lampa](https://github.com/yumata/lampa) для macOS (Apple Silicon и Intel). Lampa — проект своих авторов, Lampyris с ним не связан и не поддерживается им. Приложение на Swift/AppKit с WKWebView и воспроизведением через libmpv.
 
 ## Возможности
