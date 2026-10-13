@@ -325,7 +325,7 @@
 
   // Уведомление внизу экрана в виде капсулы, как кнопки «Продолжить / Сначала».
   let toastTimer = null;
-  function showToast(text) {
+  function showToast(text, ms = 2200) {
     addUiStyle();
     let el = document.querySelector(".mpv-toast");
     if (!el) {
@@ -339,7 +339,7 @@
     toastTimer = setTimeout(() => {
       el.classList.remove("is-shown");
       setTimeout(() => el.remove(), 300);
-    }, 2200);
+    }, ms);
   }
 
   // Кнопка «Пропустить…» (заставка, пересказ, титры, анонс) внизу справа.
@@ -1134,7 +1134,7 @@
       volume: 1, muted: false, rate: 1, error: null, pendingSeek: null,
       metadataSent: false, destroyed: false, lastTimeEvent: 0,
       waiting: false, waitTime: 0, openingStart: 0, seekTarget: null, tracksKnown: false, tracksTimedOut: false,
-      audio: [], subs: [], levels: [], pendingSubOff: null,
+      audio: [], subs: [], levels: [], pendingSubOff: null, dvWarned: false,
     };
     const playback = (L.Player.playdata && L.Player.playdata()) || {};
 
@@ -1369,6 +1369,17 @@
 
     // Элементы повторяют то, что Lampa ждёт от audioTracks/textTracks у <video>.
     // Подпись в плеере: «номер / язык / название / каналы / кодек».
+    // Dolby Vision Profile 5 не имеет совместимого базового слоя, а рендерер libmpv (OpenGL) не применяет RPU:
+    // картинка получается зелёно-фиолетовой. Предупреждаем один раз на файл.
+    function warnDolbyVision(list) {
+      if (state.dvWarned || !Array.isArray(list)) return;
+      const video = list.find((t) => t.type === "video" && t.selected);
+      if (!video || Number(video["dolby-vision-profile"]) !== 5) return;
+      state.dvWarned = true;
+      console.log("[mpv] Dolby Vision profile 5: цвета будут искажены");
+      showToast(ruLang(L) ? "Dolby Vision Profile 5 не поддерживается: цвета будут искажены" : "Dolby Vision Profile 5 is not supported: colors will be wrong", 6000);
+    }
+
     function buildTracks(list) {
       const audio = [];
       const subs = [];
@@ -1889,6 +1900,7 @@
         } else if (name === "aid" || name === "sid") {
           console.log(`[mpv] ${name} = ${data}`);
         } else if (name === "track-list") {
+          warnDolbyVision(data);
           buildTracks(data);
           state.tracksKnown = true;
           announceLoaded(false);
