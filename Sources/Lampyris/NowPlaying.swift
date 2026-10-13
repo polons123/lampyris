@@ -137,7 +137,8 @@ final class NowPlaying {
               (response.mimeType ?? "").hasPrefix("image/"), let image = NSImage(data: data), active,
               artworkURL == url else { return }  // ответ предыдущего фильма не должен заменить постер нового
         nonisolated(unsafe) let picture = image
-        info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in picture }
+        // MediaPlayer вызывает обработчик с фоновой очереди: без @Sendable замыкание наследует @MainActor и роняет приложение проверкой изоляции
+        info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { @Sendable _ in picture }
         push(force: true)
     }
 }
