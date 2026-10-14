@@ -1110,7 +1110,7 @@ dependencies = [
 
 [[package]]
 name = "lampyris"
-version = "0.1.2"
+version = "0.0.0"
 dependencies = [
  "libloading",
  "muda",

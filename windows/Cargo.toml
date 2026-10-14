@@ -1,6 +1,7 @@
 [package]
 name = "lampyris"
-version = "0.1.2"
+# Версия приложения — scripts/VERSION (общая с macOS), build.rs подставляет её в ресурсы exe.
+version = "0.0.0"
 description = "Неофициальный нативный клиент Lampa для Windows (WebView2 + libmpv)"
 edition = "2021"
 license = "GPL-3.0-or-later"

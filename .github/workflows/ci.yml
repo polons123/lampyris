@@ -116,7 +116,7 @@ jobs:
             dist/Lampyris-*-windows-${{ matrix.arch }}-setup.exe
           if-no-files-found: error
 
-  # Раннеры Windows на ARM бесплатны только для публичных репозиториев: для приватного задача пропускается.
+  # Раннеры Windows на ARM доступны только для публичных репозиториев (сейчас репозиторий публичный): для приватного задача пропускается.
   windows-build-arm64:
     name: Сборка Windows arm64
     needs: windows-test
@@ -149,13 +149,20 @@ jobs:
 
   release:
     name: Публикация релиза
-    # Сборка arm64 для Windows может быть пропущена (приватный репозиторий): остальные должны пройти.
+    # Сборка arm64 для Windows может быть пропущена (если репозиторий станет приватным): остальные должны пройти.
     if: ${{ startsWith(github.ref, 'refs/tags/v') && !cancelled() && needs.build.result == 'success' && needs.windows-build.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.windows-build-arm64.result) }}
     needs: [build, windows-build, windows-build-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      - name: Тег должен совпадать с версией в scripts/VERSION
+        run: |
+          if [ "${GITHUB_REF_NAME#v}" != "$(cat scripts/VERSION)" ]; then
+            echo "Тег ${GITHUB_REF_NAME} не совпадает с scripts/VERSION ($(cat scripts/VERSION))" >&2
+            exit 1
+          fi
       - uses: actions/download-artifact@v4
         with:
           path: dist
