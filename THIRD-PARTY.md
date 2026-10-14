@@ -16,6 +16,11 @@
 
 Итоговое сочетание GPL-2.0+ и GPL-3.0+ допустимо при распространении под GPL-3.0-or-later. Тексты лицензий отдельных библиотек находятся в их исходных пакетах.
 
+## Библиотеки, входящие в сборку для Windows
+В пакет Windows входит `libmpv-2.dll` из непрерывных сборок mpv-winbuild (https://github.com/zhongfly/mpv-winbuild, пакеты `mpv-dev-x86_64` и `mpv-dev-aarch64`, GPL-вариант). Тег релиза, файл и SHA-256 зафиксированы в `windows/scripts/libmpv.lock`; сборка не пройдёт при несовпадении. Состав DLL: mpv (GPL-2.0-or-later), FFmpeg с `--enable-gpl` (GPL-2.0-or-later/GPL-3.0-or-later), libplacebo, libass, dav1d, zimg, lcms2, harfbuzz, freetype, libarchive и другие библиотеки (разрешительные и LGPL); их версии и исходники указаны у сборщика.
+
+Приложение для Windows (Rust) использует: tao и wry (MIT/Apache-2.0), WebView2 Runtime (системный компонент Microsoft, не входит в пакет), `windows` (MIT/Apache-2.0), muda (MIT/Apache-2.0), libloading (ISC), ureq и native-tls (MIT/Apache-2.0; TLS средствами Windows), serde_json, url (MIT/Apache-2.0). Полный список — `windows/Cargo.lock`.
+
 ## Исходный код
 Тем, кому вы передаёте сборку `.app`, исходный код приложения должен быть доступен (требование GPL). Репозиторий: https://github.com/polons123/lampyris — на момент выбора лицензии он приватный: перед раздачей либо сделайте его публичным, либо передавайте исходники вместе со сборкой или по запросу. Исходный код mpv и FFmpeg доступен на https://github.com/mpv-player/mpv и https://ffmpeg.org (версии указаны в таблице).
 

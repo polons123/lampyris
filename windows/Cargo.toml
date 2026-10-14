@@ -1,0 +1,30 @@
+[package]
+name = "lampyris"
+version = "0.1.2"
+description = "Неофициальный нативный клиент Lampa для Windows (WebView2 + libmpv)"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+# tao и wry — те же компоненты, на которых построен Tauri; напрямую они дают обработчик IPC
+# с источником отправителя, который нужен мосту (Tauri IPC рассчитан на собственные страницы).
+tao = "0.37"
+wry = "0.57"
+serde_json = "1"
+url = "2"
+muda = "0.21"
+ureq = { version = "2", default-features = false, features = ["native-tls"] }
+native-tls = "0.2"
+libloading = "0.8"
+windows = { version = "0.61", features = [
+    "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_System_Power", "Win32_System_SystemInformation",
+    "Foundation", "Media", "Media_Playback", "Storage_Streams",
+] }
+
+[build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

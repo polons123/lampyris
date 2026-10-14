@@ -2,7 +2,7 @@
 
 **Русский** | [English](README.en.md)
 
-Неофициальный нативный клиент [Lampa](https://github.com/yumata/lampa) для macOS (Apple Silicon и Intel). Lampa — проект своих авторов, Lampyris с ним не связан и не поддерживается им. Приложение на Swift/AppKit с WKWebView и воспроизведением через libmpv.
+Неофициальный нативный клиент [Lampa](https://github.com/yumata/lampa) для macOS (Apple Silicon и Intel) и Windows (x64 и arm64). Lampa — проект своих авторов, Lampyris с ним не связан и не поддерживается им. На macOS приложение написано на Swift/AppKit с WKWebView, на Windows на Rust с WebView2; воспроизведение везде через libmpv.
 
 ## Возможности
 - mpv вместо встроенного плеера: аппаратное декодирование, AC3/DTS, профили и `mpv.conf` с редактором.
@@ -10,11 +10,22 @@
 - Пропуск заставок и титров по таймкодам TheIntroDB, субтитры из интернета (русские и английские).
 - Клавиши плеера (справка по `H`), статистика (`I`), скриншот (`S`), медиаклавиши и «Сейчас играет».
 - Запоминание окна, меню приложения, страница ошибки, журнал.
+- На Windows то же самое: мост и скрипты общие с macOS, плюс полный экран (`F11`), медиаклавиши и «Сейчас играет» через системные элементы Windows.
 
 ## Установка
 Две сборки (обе требуют macOS 13 или новее): `Lampyris-<версия>-arm64` для Mac с Apple Silicon и `Lampyris-<версия>-intel` для Mac с процессором Intel. Откройте .dmg и перетащите Lampyris в «Программы».
 
 Сборка подписана ad-hoc (без сертификата разработчика Apple), поэтому при первом запуске macOS может написать, что не может проверить приложение. Откройте «Системные настройки → Конфиденциальность и безопасность» и нажмите «Всё равно открыть», либо выполните в Терминале `xattr -dr com.apple.quarantine /Applications/Lampyris.app`.
+
+### Windows
+Установщик `Lampyris-<версия>-windows-x64-setup.exe` или `-arm64-setup.exe` (ставит для текущего пользователя без прав администратора, добавляет ярлык в меню «Пуск», удаляется через «Приложения») либо портативный `…-windows-<arch>.zip`: распакуйте в любую папку и запустите `Lampyris.exe` (нужен WebView2 Runtime, он есть в Windows 11 и в обновлённой Windows 10). Сборки не подписаны, поэтому SmartScreen может предупредить: «Подробнее» → «Выполнить в любом случае». Устройство приложения: [docs/ARCHITECTURE-windows.md](docs/ARCHITECTURE-windows.md).
+
+```
+cd windows && cargo test --release              # тесты (разбор mpv.conf, журнал, мост)
+windows\scripts\build-windows.ps1 -Arch x64      # или arm64: пакет и .zip в dist\
+windows\scripts\build-installer.ps1 -Arch x64    # установщик из этого пакета (нужен Inno Setup 6); подпись: LAMPYRIS_SIGN_PFX и LAMPYRIS_SIGN_PASSWORD
+```
+Нужны Rust (цели `x86_64-pc-windows-msvc` и `aarch64-pc-windows-msvc`) и Visual Studio Build Tools с C++; libmpv скачивается скриптом с проверкой SHA-256.
 
 ## Сборка .app
 ```
@@ -41,9 +52,10 @@ swift test              # разбор mpv.conf и сокращение адре
 `.github/workflows/ci.yml` (GitHub Actions) на каждый пуш в `main` и на каждый запрос слияния:
 1. запускает проверки и тесты на macOS (Apple Silicon);
 2. собирает `Lampyris.app` под arm64 (Apple Silicon) и под x86_64 (настоящий Intel-раннер `macos-26-intel`), проверяет состав пакета и делает дымовой запуск (воспроизведение тестового видео);
-3. сохраняет `.dmg` и `.zip` каждой сборки как артефакты запуска.
+3. сохраняет `.dmg` и `.zip` каждой сборки как артефакты запуска;
+4. то же для Windows: `cargo test`, пакет x64 (и arm64 для публичного репозитория), дымовой запуск, `.zip` и установщик `-setup.exe` как артефакты.
 
-Чтобы выпустить версию, поднимите номер в `scripts/VERSION`, закоммитьте и поставьте тег вида `v0.1.0`: CI соберёт обе сборки и опубликует релиз с `.dmg`, `.zip` и `SHA256SUMS.txt`. Для работы с файлами workflow через `gh` у токена должно быть право `workflow` (`gh auth refresh -h github.com -s workflow`).
+Чтобы выпустить версию, поднимите номер в `scripts/VERSION`, закоммитьте и поставьте тег вида `v0.1.0`: CI соберёт обе сборки и опубликует релиз с `.dmg`, `.zip` и установщиками `-setup.exe` (Windows) и `SHA256SUMS.txt`. Для работы с файлами workflow через `gh` у токена должно быть право `workflow` (`gh auth refresh -h github.com -s workflow`).
 
 ## Лицензия
 GNU GPL версии 3 или более поздней (GPL-3.0-or-later), см. [LICENSE](LICENSE). Сведения о сторонних компонентах и сервисах — в [THIRD-PARTY.md](THIRD-PARTY.md).

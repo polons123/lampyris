@@ -8,7 +8,7 @@ fail=0
 for f in scripts/*.sh; do
   bash -n "$f" && echo "shell ok: $f" || { echo "ОШИБКА синтаксиса: $f" >&2; fail=1; }
 done
-for f in Sources/Lampyris/Resources/*.js; do
+for f in Sources/Lampyris/Resources/*.js windows/src/*.js; do
   "$JSC" -e "new Function(readFile('$f'))" >/dev/null && echo "js ok: $f" || { echo "ОШИБКА синтаксиса: $f" >&2; fail=1; }
 done
 # В DOM-коде страницы не должно быть append/prepend с несколькими аргументами: Lampa подменяет их версией с одним аргументом.

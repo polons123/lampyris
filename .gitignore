@@ -8,3 +8,6 @@
 /Packages
 DerivedData/
 xcuserdata/
+/windows/target
+/windows/gen
+/windows/build

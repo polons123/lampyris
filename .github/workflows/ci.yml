@@ -68,10 +68,90 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
+  windows-test:
+    name: Тесты (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows
+      - name: Тесты (разбор mpv.conf, журнал, мост)
+        working-directory: windows
+        run: cargo test --release --locked
+
+  windows-build:
+    name: Сборка Windows ${{ matrix.arch }}
+    needs: windows-test
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows
+          key: ${{ matrix.arch }}
+      - name: Сборка пакета
+        shell: pwsh
+        run: windows/scripts/build-windows.ps1 -Arch ${{ matrix.arch }}
+      - name: Дымовой запуск (воспроизведение тестового видео, не блокирует)
+        continue-on-error: true
+        shell: pwsh
+        run: windows/scripts/smoke.ps1 -Dir (Get-ChildItem dist -Directory -Filter 'Lampyris-*-windows-${{ matrix.arch }}').FullName
+      - name: Установщик
+        shell: pwsh
+        run: windows/scripts/build-installer.ps1 -Arch ${{ matrix.arch }} -InstallInnoIfMissing
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lampyris-windows-${{ matrix.arch }}
+          path: |
+            dist/Lampyris-*-windows-${{ matrix.arch }}.zip
+            dist/Lampyris-*-windows-${{ matrix.arch }}-setup.exe
+          if-no-files-found: error
+
+  # Раннеры Windows на ARM бесплатны только для публичных репозиториев: для приватного задача пропускается.
+  windows-build-arm64:
+    name: Сборка Windows arm64
+    needs: windows-test
+    if: ${{ !github.event.repository.private }}
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows
+          key: arm64
+      - name: Сборка пакета
+        shell: pwsh
+        run: windows/scripts/build-windows.ps1 -Arch arm64
+      - name: Дымовой запуск (не блокирует)
+        continue-on-error: true
+        shell: pwsh
+        run: windows/scripts/smoke.ps1 -Dir (Get-ChildItem dist -Directory -Filter 'Lampyris-*-windows-arm64').FullName
+      - name: Установщик
+        shell: pwsh
+        run: windows/scripts/build-installer.ps1 -Arch arm64 -InstallInnoIfMissing
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lampyris-windows-arm64
+          path: |
+            dist/Lampyris-*-windows-arm64.zip
+            dist/Lampyris-*-windows-arm64-setup.exe
+          if-no-files-found: error
+
   release:
     name: Публикация релиза
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    # Сборка arm64 для Windows может быть пропущена (приватный репозиторий): остальные должны пройти.
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && !cancelled() && needs.build.result == 'success' && needs.windows-build.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.windows-build-arm64.result) }}
+    needs: [build, windows-build, windows-build-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -85,5 +165,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd dist
-          shasum -a 256 *.dmg *.zip > SHA256SUMS.txt
-          gh release create "${{ github.ref_name }}" *.dmg *.zip SHA256SUMS.txt --repo "${{ github.repository }}" --generate-notes
+          shasum -a 256 *.dmg *.zip *-setup.exe > SHA256SUMS.txt
+          gh release create "${{ github.ref_name }}" *.dmg *.zip *-setup.exe SHA256SUMS.txt --repo "${{ github.repository }}" --generate-notes
