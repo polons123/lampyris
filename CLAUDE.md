@@ -1,6 +1,6 @@
 # Lampyris
 
-Неофициальный нативный клиент Lampa для macOS (Apple Silicon и Intel) на Swift: окно с WKWebView и воспроизведение через libmpv; версия для Windows (x64 и arm64) в `windows/` на Rust (tao, wry, WebView2, libmpv). Устройство, решения и ограничения описаны в [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) и [docs/ARCHITECTURE-windows.md](docs/ARCHITECTURE-windows.md), сборка и установка в [README.md](README.md). Этот файл содержит только указания для ассистента.
+Неофициальный клиент Lampa для macOS (Apple Silicon и Intel) на Swift: окно с WKWebView и воспроизведение через libmpv; версия для Windows (x64 и arm64) в `windows/` на Rust (tao, wry, WebView2, libmpv). Устройство, решения и ограничения описаны в [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) и [docs/ARCHITECTURE-windows.md](docs/ARCHITECTURE-windows.md), сборка и установка в [README.md](README.md). Этот файл содержит только указания для ассистента.
 
 ## Команды
 - Запуск: `swift run` (нужен Homebrew mpv или `LAMPA_LIBS=<каталог с dylib>`); отладка: `LAMPA_DEBUG=1 swift run`.

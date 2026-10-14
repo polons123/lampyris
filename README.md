@@ -2,7 +2,7 @@
 
 **Русский** | [English](README.en.md)
 
-Неофициальный нативный клиент [Lampa](https://github.com/yumata/lampa) для macOS (Apple Silicon и Intel) и Windows (x64 и arm64). Lampa — проект своих авторов, Lampyris с ним не связан и не поддерживается им. На macOS приложение написано на Swift/AppKit с WKWebView, на Windows на Rust с WebView2; воспроизведение везде через libmpv.
+Неофициальный клиент [Lampa](https://github.com/yumata/lampa) для macOS (Apple Silicon и Intel) и Windows (x64 и arm64). Lampa — проект своих авторов, Lampyris с ним не связан и не поддерживается им. На macOS приложение написано на Swift/AppKit с WKWebView, на Windows на Rust с WebView2; воспроизведение везде через libmpv.
 
 ## Возможности
 - mpv вместо встроенного плеера: аппаратное декодирование, AC3/DTS, профили и `mpv.conf` с редактором.

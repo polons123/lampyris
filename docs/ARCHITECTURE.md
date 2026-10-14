@@ -1,6 +1,6 @@
 # Lampyris: устройство приложения
 
-Неофициальный нативный клиент [Lampa](https://github.com/yumata/lampa) для macOS (Apple Silicon и Intel): окно на Swift/AppKit с WKWebView, в котором работает страница Lampa вашего сервера, и воспроизведение через libmpv. Сборка, запуск и лицензия описаны в [README](../README.md), сторонние компоненты в [THIRD-PARTY.md](../THIRD-PARTY.md).
+Неофициальный клиент [Lampa](https://github.com/yumata/lampa) для macOS (Apple Silicon и Intel): окно на Swift/AppKit с WKWebView, в котором работает страница Lampa вашего сервера, и воспроизведение через libmpv. Сборка, запуск и лицензия описаны в [README](../README.md), сторонние компоненты в [THIRD-PARTY.md](../THIRD-PARTY.md).
 
 ## Структура пакета
 - `Sources/CMpv`: системная библиотека (module map и заголовки клиентского API mpv 0.41, лицензия ISC).
