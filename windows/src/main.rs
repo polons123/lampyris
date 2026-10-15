@@ -326,8 +326,50 @@ fn pick_backup(hwnd: isize) -> Option<backup::Backup> {
     (answer == IDYES).then_some(b)
 }
 
+/// Наименьший размер рабочей области окна (логические пиксели).
+const MIN_WIDTH: f64 = 800.0;
+const MIN_HEIGHT: f64 = 600.0;
+
+/// Метка на главном окне: по ней второй экземпляр находит первое окно (заголовок меняется, класс общий).
+const MAIN_WINDOW_PROP: &str = "LampyrisMainWindow";
+
+/// Занимает именованный мьютекс сеанса; true, если Lampyris уже запущена. Хэндл живёт до конца процесса.
+fn another_instance_running() -> bool {
+    use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows::Win32::System::Threading::CreateMutexW;
+    unsafe {
+        match CreateMutexW(None, false, &HSTRING::from("Local\\Lampyris-single-instance")) {
+            Ok(_) => GetLastError() == ERROR_ALREADY_EXISTS,
+            Err(_) => false,
+        }
+    }
+}
+
+/// Выводит на передний план окно уже запущенного экземпляра.
+fn raise_existing_window() {
+    use windows::core::BOOL;
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetPropW, IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE};
+    unsafe extern "system" fn each(hwnd: HWND, _: LPARAM) -> BOOL {
+        unsafe {
+            if !GetPropW(hwnd, &HSTRING::from(MAIN_WINDOW_PROP)).is_invalid() {
+                if IsIconic(hwnd).as_bool() { let _ = ShowWindow(hwnd, SW_RESTORE); }
+                let _ = SetForegroundWindow(hwnd);
+                return BOOL(0);
+            }
+        }
+        BOOL(1)
+    }
+    unsafe { let _ = EnumWindows(Some(each), LPARAM(0)); }
+}
+
 fn main() {
     log::init();
+    // Мьютекс занимаем всегда (чтобы запретивший копии экземпляр видели другие), а выходим только при включённой настройке.
+    if another_instance_running() && settings::single_instance() {
+        log::info("app", "Lampyris уже запущена (включён запрет нескольких экземпляров), выход");
+        raise_existing_window();
+        return;
+    }
     bridge::clean_subtitle_cache();
     update::clean_cache();
     let test_source = std::env::var("LAMPA_MPV_TEST").ok();
@@ -345,9 +387,15 @@ fn main() {
     builder = match saved {
         Some(w) => builder.with_inner_size(PhysicalSize::new(w.w, w.h)).with_position(PhysicalPosition::new(w.x, w.y)).with_maximized(w.maximized),
         None => builder.with_inner_size(tao::dpi::LogicalSize::new(1280.0, 720.0)),
-    };
+    }.with_min_inner_size(tao::dpi::LogicalSize::new(MIN_WIDTH, MIN_HEIGHT));
     let window = builder.build(&event_loop).expect("окно");
     let hwnd = window.hwnd() as isize;
+    let want_inner = window.inner_size();
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::SetPropW;
+        use windows::Win32::Foundation::HANDLE;
+        let _ = SetPropW(HWND(hwnd as *mut _), &HSTRING::from(MAIN_WINDOW_PROP), Some(HANDLE(1 as *mut _)));
+    }
     // Пока окна mpv нет (между потоками, при смене качества), прозрачная страница показывает фон главного окна: он должен быть чёрным, а не белым.
     unsafe {
         use windows::Win32::Graphics::Gdi::{GetStockObject, BLACK_BRUSH};
@@ -520,6 +568,7 @@ fn main() {
     // Меню окна (в полном экране скрывается). Сочетания клавиш обрабатывает страница (window.js), поэтому здесь они только подписаны.
     let menu = Menu::new();
     let verbose_item = CheckMenuItem::with_id("verbose", "Подробный журнал", true, log::is_verbose_setting(), None);
+    let single_item = CheckMenuItem::with_id("single", "Запретить несколько экземпляров", true, settings::single_instance(), None);
     let auto_update_item = CheckMenuItem::with_id("updateauto", "Проверять обновления автоматически", true, update::auto_check(), None);
     {
         let file = Submenu::new("Файл", true);
@@ -529,10 +578,18 @@ fn main() {
         let item = |id: &str, text: &str| MenuItem::with_id(id, text, true, None);
         let _ = file.append_items(&[&item("server", "Изменить адрес сервера…\tCtrl+,"), &item("reload", "Перезагрузить\tF5"), &PredefinedMenuItem::separator(), &item("quit", "Выход\tAlt+F4")]);
         let _ = view.append(&item("fullscreen", "Полный экран\tF11"));
-        let _ = tools.append_items(&[&item("conf", "Открыть mpv.conf"), &item("confdir", "Показать mpv.conf в Проводнике"), &PredefinedMenuItem::separator(), &item("backup", "Сохранить настройки в файл…"), &item("restore", "Восстановить настройки из файла…"), &PredefinedMenuItem::separator(), &verbose_item, &item("logdir", "Показать журнал в Проводнике")]);
+        let _ = tools.append_items(&[&item("conf", "Открыть mpv.conf"), &item("confdir", "Показать mpv.conf в Проводнике"), &PredefinedMenuItem::separator(), &item("backup", "Сохранить настройки в файл…"), &item("restore", "Восстановить настройки из файла…"), &PredefinedMenuItem::separator(), &verbose_item, &single_item, &item("logdir", "Показать журнал в Проводнике")]);
         let _ = help.append_items(&[&item("update", "Проверить обновления…"), &auto_update_item, &PredefinedMenuItem::separator(), &item("about", "О программе Lampyris")]);
         let _ = menu.append_items(&[&file, &view, &tools, &help]);
         let _ = unsafe { menu.init_for_hwnd(hwnd) };
+        // Меню отнимает высоту у рабочей области уже созданного окна; возвращаем запрошенный размер, иначе каждый запуск «съедает» полосу меню.
+        let got = window.inner_size();
+        if !window.is_maximized() && got.height < want_inner.height {
+            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER};
+            let outer = window.outer_size();
+            let height = outer.height + (want_inner.height - got.height);
+            let _ = unsafe { SetWindowPos(HWND(hwnd as *mut _), None, 0, 0, outer.width as i32, height as i32, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE) };
+        }
         let proxy = proxy.clone();
         MenuEvent::set_event_handler(Some(move |e: MenuEvent| { let _ = proxy.send_event(UserEvent::Menu(e.id.0)); }));
     }
@@ -665,6 +722,10 @@ fn main() {
                     "update" => {
                         let proxy = proxy.clone();
                         update::check(true, move |m| { let _ = proxy.send_event(UserEvent::Update(m)); });
+                    }
+                    "single" => {
+                        settings::set_single_instance(!settings::single_instance());
+                        single_item.set_checked(settings::single_instance());
                     }
                     "updateauto" => update::set_auto_check(!update::auto_check()),
                     _ => {}

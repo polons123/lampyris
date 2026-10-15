@@ -130,3 +130,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 }
+
+/// Разрешён ли только один запущенный экземпляр (по умолчанию выключено); действует со следующего запуска.
+pub fn single_instance() -> bool {
+    get_bool("singleInstance")
+}
+
+pub fn set_single_instance(on: bool) {
+    set_value("singleInstance", Value::Bool(on));
+}
