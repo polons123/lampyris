@@ -3,6 +3,7 @@
 //! Порт `MpvBridge.swift`: страница и плагины недоверенные, поэтому принимается только то,
 //! что нужно плееру, и только от доверенного источника.
 
+use crate::i18n::tr;
 use crate::config::{self, MpvConfig};
 use crate::http;
 use crate::log;
@@ -224,7 +225,7 @@ impl Bridge {
             "setConfig" => {
                 let Some(text) = args.first().and_then(|v| v.as_str()) else { return reply(Err("no text".into())) };
                 if text.len() > config::MAX_BYTES {
-                    return reply(Ok(json!({"ok": false, "error": "файл больше 64 КиБ"})));
+                    return reply(Ok(json!({"ok": false, "error": tr("файл больше 64 КиБ", "the file is larger than 64 KiB")})));
                 }
                 if let Err(e) = config::write_text(text) {
                     return reply(Ok(json!({"ok": false, "error": e.to_string()})));
@@ -267,15 +268,15 @@ fn search_subtitles(imdb: &str, season: i64, episode: i64) -> String {
 
 /// Скачивает субтитры (только https с *.strem.io, до 3 МБ) в кэш и подключает к mpv.
 fn load_subtitle(player: &Player, url_str: &str, title: &str, lang: &str) -> Value {
-    let Ok(url) = url::Url::parse(url_str) else { return json!({"ok": false, "error": "недопустимый адрес"}) };
+    let Ok(url) = url::Url::parse(url_str) else { return json!({"ok": false, "error": tr("недопустимый адрес", "invalid address")}) };
     let host = url.host_str().unwrap_or("").to_lowercase();
     if url.scheme() != "https" || !(host == "strem.io" || host.ends_with(".strem.io")) {
-        return json!({"ok": false, "error": "недопустимый адрес"});
+        return json!({"ok": false, "error": tr("недопустимый адрес", "invalid address")});
     }
     let generation = player.generation();
     let data = match http::get(url.as_str(), 15, MAX_SUBTITLE_BYTES, false) {
         Ok(d) if !d.is_empty() => d,
-        _ => return json!({"ok": false, "error": "не удалось скачать"}),
+        _ => return json!({"ok": false, "error": tr("не удалось скачать", "could not download")}),
     };
     let dir = settings::local_dir().join("Cache").join("subs");
     if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -290,12 +291,12 @@ fn load_subtitle(player: &Player, url_str: &str, title: &str, lang: &str) -> Val
     }
     // За время скачивания могли открыть другое видео: чужие субтитры не подключаем.
     if generation != player.generation() {
-        return json!({"ok": false, "error": "видео уже сменилось"});
+        return json!({"ok": false, "error": tr("видео уже сменилось", "the video has already changed")});
     }
     let clean_title: String = title.chars().filter(|c| *c != '\n' && *c != '\r').take(120).collect();
     let clean_lang: String = lang.chars().filter(|c| c.is_alphabetic()).take(3).collect();
     if !player.add_subtitle(&file.to_string_lossy(), &clean_title, &clean_lang) {
-        return json!({"ok": false, "error": "mpv не принял файл"});
+        return json!({"ok": false, "error": tr("mpv не принял файл", "mpv did not accept the file")});
     }
     json!({"ok": true})
 }

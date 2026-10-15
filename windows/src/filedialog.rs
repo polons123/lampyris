@@ -13,7 +13,7 @@ fn run(hwnd: isize, title: &str, default_name: &str, save: bool) -> Option<PathB
     let title = wide(title);
     let ext = wide("json");
     // Фильтр: пары «название\0маска\0», в конце два нуля.
-    let filter: Vec<u16> = "Резервная копия Lampyris (*.json)\0*.json\0Все файлы\0*.*\0\0".encode_utf16().collect();
+    let filter: Vec<u16> = format!("{}\0*.json\0{}\0*.*\0\0", crate::i18n::tr("Резервная копия Lampyris (*.json)", "Lampyris backup (*.json)"), crate::i18n::tr("Все файлы", "All files")).encode_utf16().collect();
     let mut buf = vec![0u16; 1024];
     for (i, c) in default_name.encode_utf16().take(buf.len() - 1).enumerate() {
         buf[i] = c;

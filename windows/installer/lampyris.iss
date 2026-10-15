@@ -38,7 +38,13 @@ WizardStyle=modern
 CloseApplications=yes
 
 [Languages]
+; Язык установщика выбирается по языку интерфейса Windows (русский или английский).
+Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
+
+[CustomMessages]
+english.NoWebView2=WebView2 Runtime was not found: a Microsoft component without which Lampyris cannot show Lampa.%n%nSetup will continue. If the program offers to install WebView2 after that, download it from the Microsoft page: https://go.microsoft.com/fwlink/p/?LinkId=2124703
+russian.NoWebView2=Не найден WebView2 Runtime — компонент Microsoft, без которого Lampyris не покажет Lampa.%n%nУстановка продолжится. Если после неё программа предложит установить WebView2, скачайте его на странице Microsoft: https://go.microsoft.com/fwlink/p/?LinkId=2124703
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -82,6 +88,5 @@ function InitializeSetup: Boolean;
 begin
   Result := True;
   if (not WebView2Installed) and (not WizardSilent) then
-    MsgBox('Не найден WebView2 Runtime — компонент Microsoft, без которого Lampyris не покажет Lampa.' + #13#10 + #13#10 +
-      'Установка продолжится. Если после неё программа предложит установить WebView2, скачайте его на странице Microsoft: https://go.microsoft.com/fwlink/p/?LinkId=2124703', mbInformation, MB_OK);
+    MsgBox(CustomMessage('NoWebView2'), mbInformation, MB_OK);
 end;

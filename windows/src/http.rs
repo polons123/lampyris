@@ -1,6 +1,7 @@
 //! Запросы приложения к внешним сервисам (TheIntroDB, Stremio). Страница сама ходить туда не может:
 //! это делает приложение с ограничением размера ответа.
 
+use crate::i18n::tr;
 use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,7 +26,7 @@ pub fn get(url: &str, timeout_secs: u64, max_bytes: usize, accept_json: bool) ->
             let mut buf = Vec::new();
             resp.into_reader().take(max_bytes as u64 + 1).read_to_end(&mut buf).map_err(|e| e.to_string())?;
             if buf.len() > max_bytes {
-                return Err("ответ слишком большой".into());
+                return Err(tr("ответ слишком большой", "the response is too large").into());
             }
             Ok(buf)
         }
@@ -55,27 +56,27 @@ pub fn download(url: &str, dest: &std::path::Path, max_bytes: usize, mut progres
     };
     let total = resp.header("Content-Length").and_then(|v| v.parse::<u64>().ok());
     if total.is_some_and(|t| t > max_bytes as u64) {
-        return Err("файл слишком большой".into());
+        return Err(tr("файл слишком большой", "the file is too large").into());
     }
     let result = (|| -> Result<(), String> {
-        let mut file = std::fs::File::create(dest).map_err(|e| format!("не удалось создать файл: {e}"))?;
+        let mut file = std::fs::File::create(dest).map_err(|e| crate::trf!("не удалось создать файл: {e}", "could not create the file: {e}"))?;
         let mut reader = resp.into_reader();
         let mut buf = vec![0u8; 64 * 1024];
         let mut done: u64 = 0;
         loop {
-            let n = reader.read(&mut buf).map_err(|e| format!("загрузка прервана: {e}"))?;
+            let n = reader.read(&mut buf).map_err(|e| crate::trf!("загрузка прервана: {e}", "download interrupted: {e}"))?;
             if n == 0 {
                 break;
             }
             done += n as u64;
             if done > max_bytes as u64 {
-                return Err("файл слишком большой".into());
+                return Err(tr("файл слишком большой", "the file is too large").into());
             }
-            file.write_all(&buf[..n]).map_err(|e| format!("не удалось записать файл: {e}"))?;
+            file.write_all(&buf[..n]).map_err(|e| crate::trf!("не удалось записать файл: {e}", "could not write the file: {e}"))?;
             progress(done, total);
         }
         if total.is_some_and(|t| t != done) {
-            return Err("файл получен не полностью".into());
+            return Err(tr("файл получен не полностью", "the file was not received completely").into());
         }
         Ok(())
     })();

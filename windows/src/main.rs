@@ -5,6 +5,7 @@ mod bridge;
 mod config;
 mod filedialog;
 mod http;
+mod i18n;
 mod log;
 mod mpv;
 mod pages;
@@ -14,6 +15,7 @@ mod smtc;
 mod update;
 
 use bridge::{origin_key, Bridge};
+use i18n::tr;
 use player::{Player, Sink};
 use serde_json::Value;
 use std::cell::{Cell, RefCell};
@@ -160,15 +162,20 @@ impl WinState {
     }
 }
 
-const MPV_CONF_TEMPLATE: &str = "# mpv.conf плеера Lampa. Формат: опция=значение, по одной в строке.\n\
+fn mpv_conf_template() -> &'static str {
+    tr("# mpv.conf плеера Lampa. Формат: опция=значение, по одной в строке.\n\
 # Опции до первого [раздела] общие; [имя] — профиль, выбирается в Настройки → MPV\n\
-# или клавишей P во время видео. Файл читается при каждом открытии видео.\n#\n# hwdec=d3d11va\n#\n# [bright]\n# brightness=20\n";
+# или клавишей P во время видео. Файл читается при каждом открытии видео.\n#\n# hwdec=d3d11va\n#\n# [bright]\n# brightness=20\n",
+       "# mpv.conf of the Lampa player. Format: option=value, one per line.\n\
+# Options before the first [section] are common; [name] is a profile, chosen in Settings → MPV\n\
+# or with the P key during a video. The file is read each time a video is opened.\n#\n# hwdec=d3d11va\n#\n# [bright]\n# brightness=20\n")
+}
 
 fn open_mpv_conf(select_in_explorer: bool) {
     let path = config::file_path();
     if !path.exists() {
         if let Some(dir) = path.parent() { let _ = std::fs::create_dir_all(dir); }
-        let _ = std::fs::write(&path, MPV_CONF_TEMPLATE);
+        let _ = std::fs::write(&path, mpv_conf_template());
     }
     if select_in_explorer {
         let _ = std::process::Command::new("explorer").arg(format!("/select,{}", path.display())).spawn();
@@ -180,7 +187,7 @@ fn open_mpv_conf(select_in_explorer: bool) {
 /// WebView2 Runtime не установлен или не запустился: вместо аварийного завершения объясняем, что делать.
 fn webview_unavailable(hwnd: isize, err: &str) {
     log::error("app", &format!("WebView2 не запущен: {err}"));
-    let text = "Не удалось запустить WebView2 Runtime — компонент Microsoft, в котором Lampyris показывает Lampa. В Windows 11 он есть всегда, в старой Windows 10 его нужно установить.\n\nОткрыть страницу загрузки Microsoft?";
+    let text = tr("Не удалось запустить WebView2 Runtime — компонент Microsoft, в котором Lampyris показывает Lampa. В Windows 11 он есть всегда, в старой Windows 10 его нужно установить.\n\nОткрыть страницу загрузки Microsoft?", "Could not start WebView2 Runtime, the Microsoft component Lampyris uses to show Lampa. It is always present in Windows 11; on an older Windows 10 it has to be installed.\n\nOpen the Microsoft download page?");
     let answer = unsafe { MessageBoxW(Some(HWND(hwnd as *mut _)), &HSTRING::from(text), &HSTRING::from("Lampyris"), MB_YESNO | MB_ICONERROR) };
     if answer == IDYES {
         open_externally("https://go.microsoft.com/fwlink/p/?LinkId=2124703");
@@ -188,9 +195,15 @@ fn webview_unavailable(hwnd: isize, err: &str) {
 }
 
 fn show_about(hwnd: isize) {
-    let text = format!("Lampyris {} ({})\n\nLampyris: неофициальный клиент Lampa для Windows на Rust, WebView2 и libmpv. Lampa — проект своих авторов, с Lampyris не связан.\n\n\
+    let text = if i18n::is_ru() {
+        format!("Lampyris {} ({})\n\nLampyris: неофициальный клиент Lampa для Windows на Rust, WebView2 и libmpv. Lampa — проект своих авторов, с Lampyris не связан.\n\n\
 Лицензия: GNU GPL версии 3 или новее. Исходный код: github.com/polons123/lampyris. Сведения о сторонних компонентах (mpv, FFmpeg и др.) — в файле THIRD-PARTY.md.\n\n\
-This product uses the TMDB API but is not endorsed or certified by TMDB.", update::VERSION, update::arch_label());
+This product uses the TMDB API but is not endorsed or certified by TMDB.", update::VERSION, update::arch_label())
+    } else {
+        format!("Lampyris {} ({})\n\nLampyris: an unofficial Lampa client for Windows built with Rust, WebView2 and libmpv. Lampa is a project of its own authors and is not affiliated with Lampyris.\n\n\
+License: GNU GPL version 3 or later. Source code: github.com/polons123/lampyris. Information about third-party components (mpv, FFmpeg, etc.) is in THIRD-PARTY.md.\n\n\
+This product uses the TMDB API but is not endorsed or certified by TMDB.", update::VERSION, update::arch_label())
+    };
     unsafe {
         MessageBoxW(Some(HWND(hwnd as *mut _)), &HSTRING::from(text), &HSTRING::from("Lampyris"), MB_OK | MB_ICONINFORMATION);
     }
@@ -220,21 +233,21 @@ fn wide(s: &str) -> Vec<u16> {
 fn ask_update(hwnd: isize, release: &update::Release, blocker: &Option<String>) -> UpdateAnswer {
     // Разметка TaskDialog понимает <a>: из описания релиза угловые скобки убираем.
     let notes: String = release.notes.trim().chars().filter(|c| !matches!(c, '<' | '>')).take(700).collect();
-    let mut text = format!("Установлена версия {}.", update::VERSION);
+    let mut text = crate::trf!("Установлена версия {}.", "Installed version: {}.", update::VERSION);
     if !notes.is_empty() { text.push_str("\n\n"); text.push_str(&notes); }
     match blocker {
-        None => text.push_str("\n\nНастройки и адрес сервера сохранятся. Приложение закроется и откроется заново."),
-        Some(b) => text.push_str(&format!("\n\nАвтоустановка недоступна: {b}.")),
+        None => text.push_str(tr("\n\nНастройки и адрес сервера сохранятся. Приложение закроется и откроется заново.", "\n\nYour settings and server address will be kept. The app will close and reopen.")),
+        Some(b) => text.push_str(&crate::trf!("\n\nАвтоустановка недоступна: {b}.", "\n\nAutomatic installation is unavailable: {b}.")),
     }
     if let Ok(u) = url::Url::parse(&release.page_url) {
-        if u.scheme() == "https" { text.push_str(&format!("\n\n<a href=\"{}\">Что изменилось в этой версии</a>", u.as_str())); }
+        if u.scheme() == "https" { text.push_str(&crate::trf!("\n\n<a href=\"{}\">Что изменилось в этой версии</a>", "\n\n<a href=\"{}\">What changed in this version</a>", u.as_str())); }
     }
-    let title = wide("Lampyris — обновление");
-    let instruction = wide(&format!("Доступна версия {}", release.version));
+    let title = wide(tr("Lampyris — обновление", "Lampyris — update"));
+    let instruction = wide(&crate::trf!("Доступна версия {}", "Version {} is available", release.version));
     let content = wide(&text);
-    let first = wide(if blocker.is_none() { "Установить и перезапустить" } else { "Открыть страницу загрузки" });
-    let later = wide("Напомнить позже");
-    let skip = wide("Пропустить эту версию");
+    let first = wide(if blocker.is_none() { tr("Установить и перезапустить", "Install and restart") } else { tr("Открыть страницу загрузки", "Open the download page") });
+    let later = wide(tr("Напомнить позже", "Remind me later"));
+    let skip = wide(tr("Пропустить эту версию", "Skip this version"));
     let buttons = [
         TASKDIALOG_BUTTON { nButtonID: 100, pszButtonText: windows::core::PCWSTR(first.as_ptr()) },
         TASKDIALOG_BUTTON { nButtonID: 101, pszButtonText: windows::core::PCWSTR(later.as_ptr()) },
@@ -284,45 +297,45 @@ fn collect_backup(lampa: Option<backup::Lampa>) -> backup::Backup {
 
 fn save_backup(hwnd: isize, lampa: Option<backup::Lampa>) {
     let day = &backup::iso_utc(now_secs())[..10];
-    let Some(path) = filedialog::save(hwnd, "Сохранить настройки Lampyris", &format!("Lampyris-настройки-{day}.json")) else { return };
+    let Some(path) = filedialog::save(hwnd, tr("Сохранить настройки Lampyris", "Save Lampyris settings"), &crate::trf!("Lampyris-настройки-{day}.json", "Lampyris-settings-{day}.json")) else { return };
     let has_lampa = lampa.is_some();
     let text = collect_backup(lampa).to_json(update::VERSION, "windows", &backup::iso_utc(now_secs()));
     match std::fs::write(&path, text) {
         Ok(()) => {
             log::info("backup", "настройки сохранены в файл");
-            let note = if has_lampa { "" } else { "\n\nДанные страницы Lampa не вошли: сейчас открыта не страница сервера. Откройте Lampa и повторите, если они нужны." };
-            message(hwnd, "Настройки сохранены", &format!("{}\n\nФайл содержит адрес сервера и данные Lampa (вход, закладки): храните его в надёжном месте.{note}", path.display()), MB_ICONINFORMATION);
+            let note = if has_lampa { "" } else { tr("\n\nДанные страницы Lampa не вошли: сейчас открыта не страница сервера. Откройте Lampa и повторите, если они нужны.", "\n\nLampa page data was not included: the server page is not open right now. Open Lampa and try again if you need it.") };
+            message(hwnd, tr("Настройки сохранены", "Settings saved"), &crate::trf!("{}\n\nФайл содержит адрес сервера и данные Lampa (вход, закладки): храните его в надёжном месте.{note}", "{}\n\nThe file contains the server address and Lampa data (login, bookmarks): keep it somewhere safe.{note}", path.display()), MB_ICONINFORMATION);
         }
-        Err(e) => message(hwnd, "Не удалось сохранить настройки", &e.to_string(), MB_ICONERROR),
+        Err(e) => message(hwnd, tr("Не удалось сохранить настройки", "Could not save settings"), &e.to_string(), MB_ICONERROR),
     }
 }
 
 /// Выбор файла, разбор и подтверждение; None — отказ или ошибка (о ней пользователь уже уведомлён).
 fn pick_backup(hwnd: isize) -> Option<backup::Backup> {
-    let path = filedialog::open(hwnd, "Выберите файл резервной копии Lampyris")?;
+    let path = filedialog::open(hwnd, tr("Выберите файл резервной копии Lampyris", "Choose a Lampyris backup file"))?;
     let parsed = std::fs::metadata(&path)
         .map_err(|e| e.to_string())
-        .and_then(|m| if m.len() > backup::MAX_FILE_BYTES { Err("файл слишком большой для резервной копии".to_string()) } else { Ok(()) })
+        .and_then(|m| if m.len() > backup::MAX_FILE_BYTES { Err(tr("файл слишком большой для резервной копии", "the file is too large for a backup").to_string()) } else { Ok(()) })
         .and_then(|_| std::fs::read(&path).map_err(|e| e.to_string()))
         .and_then(|bytes| backup::Backup::parse(&bytes));
     let b = match parsed {
         Ok(b) => b,
         Err(e) => {
-            message(hwnd, "Не удалось прочитать файл", &e, MB_ICONERROR);
+            message(hwnd, tr("Не удалось прочитать файл", "Could not read the file"), &e, MB_ICONERROR);
             return None;
         }
     };
     let mut parts: Vec<String> = Vec::new();
-    if let Some(s) = &b.server_url { parts.push(format!("адрес сервера: {s} и история адресов")); }
-    if b.verbose_log.is_some() || b.auto_update_check.is_some() { parts.push("переключатели меню".into()); }
+    if let Some(s) = &b.server_url { parts.push(crate::trf!("адрес сервера: {s} и история адресов", "server address: {s} and address history")); }
+    if b.verbose_log.is_some() || b.auto_update_check.is_some() { parts.push(tr("переключатели меню", "menu switches").into()); }
     if b.mpv_conf.is_some() { parts.push("mpv.conf".into()); }
-    if let Some(l) = &b.lampa { parts.push(format!("данные Lampa ({} записей: вход, закладки, плагины)", l.items.len())); }
+    if let Some(l) = &b.lampa { parts.push(crate::trf!("данные Lampa ({} записей: вход, закладки, плагины)", "Lampa data ({} entries: login, bookmarks, plugins)", l.items.len())); }
     if parts.is_empty() {
-        message(hwnd, "В файле нет настроек", "Восстанавливать нечего.", MB_ICONINFORMATION);
+        message(hwnd, tr("В файле нет настроек", "The file has no settings"), tr("Восстанавливать нечего.", "Nothing to restore."), MB_ICONINFORMATION);
         return None;
     }
-    let text = format!("Будут заменены: {}.\n\nСтраница Lampa перезагрузится. Продолжить?", parts.join("; "));
-    let answer = unsafe { MessageBoxW(Some(HWND(hwnd as *mut _)), &HSTRING::from(text), &HSTRING::from("Заменить текущие настройки?"), MB_YESNO | MB_ICONWARNING) };
+    let text = crate::trf!("Будут заменены: {}.\n\nСтраница Lampa перезагрузится. Продолжить?", "Will be replaced: {}.\n\nThe Lampa page will reload. Continue?", parts.join("; "));
+    let answer = unsafe { MessageBoxW(Some(HWND(hwnd as *mut _)), &HSTRING::from(text), &HSTRING::from(tr("Заменить текущие настройки?", "Replace the current settings?")), MB_YESNO | MB_ICONWARNING) };
     (answer == IDYES).then_some(b)
 }
 
@@ -567,19 +580,41 @@ fn main() {
 
     // Меню окна (в полном экране скрывается). Сочетания клавиш обрабатывает страница (window.js), поэтому здесь они только подписаны.
     let menu = Menu::new();
-    let verbose_item = CheckMenuItem::with_id("verbose", "Подробный журнал", true, log::is_verbose_setting(), None);
-    let single_item = CheckMenuItem::with_id("single", "Запретить несколько экземпляров", true, settings::single_instance(), None);
-    let auto_update_item = CheckMenuItem::with_id("updateauto", "Проверять обновления автоматически", true, update::auto_check(), None);
+    // Все подписи меню хранятся парами (рус., англ.): при смене языка их выставляют заново.
+    let mut menu_items: Vec<(MenuItem, &'static str, &'static str)> = Vec::new();
+    let mut menu_checks: Vec<(CheckMenuItem, &'static str, &'static str)> = Vec::new();
+    let mut menu_subs: Vec<(Submenu, &'static str, &'static str)> = Vec::new();
+    let mut check = |id: &str, ru: &'static str, en: &'static str, on: bool| {
+        let c = CheckMenuItem::with_id(id, tr(ru, en), true, on, None);
+        menu_checks.push((c.clone(), ru, en));
+        c
+    };
+    let verbose_item = check("verbose", "Подробный журнал", "Verbose log", log::is_verbose_setting());
+    let single_item = check("single", "Запретить несколько экземпляров", "Prevent multiple instances", settings::single_instance());
+    let auto_update_item = check("updateauto", "Проверять обновления автоматически", "Check for updates automatically", update::auto_check());
+    let lang_ru_item = check("lang_ru", "Русский", "Русский", i18n::is_ru());
+    let lang_en_item = check("lang_en", "English", "English", !i18n::is_ru());
     {
-        let file = Submenu::new("Файл", true);
-        let view = Submenu::new("Вид", true);
-        let tools = Submenu::new("Настройки", true);
-        let help = Submenu::new("Справка", true);
-        let item = |id: &str, text: &str| MenuItem::with_id(id, text, true, None);
-        let _ = file.append_items(&[&item("server", "Изменить адрес сервера…\tCtrl+,"), &item("reload", "Перезагрузить\tF5"), &PredefinedMenuItem::separator(), &item("quit", "Выход\tAlt+F4")]);
-        let _ = view.append(&item("fullscreen", "Полный экран\tF11"));
-        let _ = tools.append_items(&[&item("conf", "Открыть mpv.conf"), &item("confdir", "Показать mpv.conf в Проводнике"), &PredefinedMenuItem::separator(), &item("backup", "Сохранить настройки в файл…"), &item("restore", "Восстановить настройки из файла…"), &PredefinedMenuItem::separator(), &verbose_item, &single_item, &item("logdir", "Показать журнал в Проводнике")]);
-        let _ = help.append_items(&[&item("update", "Проверить обновления…"), &auto_update_item, &PredefinedMenuItem::separator(), &item("about", "О программе Lampyris")]);
+        let mut sub = |ru: &'static str, en: &'static str| {
+            let m = Submenu::new(tr(ru, en), true);
+            menu_subs.push((m.clone(), ru, en));
+            m
+        };
+        let file = sub("Файл", "File");
+        let view = sub("Вид", "View");
+        let tools = sub("Настройки", "Settings");
+        let lang = Submenu::new("Язык / Language", true);
+        let help = sub("Справка", "Help");
+        let mut item = |id: &str, ru: &'static str, en: &'static str| {
+            let m = MenuItem::with_id(id, tr(ru, en), true, None);
+            menu_items.push((m.clone(), ru, en));
+            m
+        };
+        let _ = lang.append_items(&[&lang_ru_item, &lang_en_item]);
+        let _ = file.append_items(&[&item("server", "Изменить адрес сервера…\tCtrl+,", "Change server address…\tCtrl+,"), &item("reload", "Перезагрузить\tF5", "Reload\tF5"), &PredefinedMenuItem::separator(), &item("quit", "Выход\tAlt+F4", "Exit\tAlt+F4")]);
+        let _ = view.append(&item("fullscreen", "Полный экран\tF11", "Full screen\tF11"));
+        let _ = tools.append_items(&[&item("conf", "Открыть mpv.conf", "Open mpv.conf"), &item("confdir", "Показать mpv.conf в Проводнике", "Show mpv.conf in Explorer"), &PredefinedMenuItem::separator(), &item("backup", "Сохранить настройки в файл…", "Save settings to a file…"), &item("restore", "Восстановить настройки из файла…", "Restore settings from a file…"), &PredefinedMenuItem::separator(), &lang, &verbose_item, &single_item, &item("logdir", "Показать журнал в Проводнике", "Show log in Explorer")]);
+        let _ = help.append_items(&[&item("update", "Проверить обновления…", "Check for updates…"), &auto_update_item, &PredefinedMenuItem::separator(), &item("about", "О программе Lampyris", "About Lampyris")]);
         let _ = menu.append_items(&[&file, &view, &tools, &help]);
         let _ = unsafe { menu.init_for_hwnd(hwnd) };
         // Меню отнимает высоту у рабочей области уже созданного окна; возвращаем запрошенный размер, иначе каждый запуск «съедает» полосу меню.
@@ -728,11 +763,21 @@ fn main() {
                         single_item.set_checked(settings::single_instance());
                     }
                     "updateauto" => update::set_auto_check(!update::auto_check()),
+                    id @ ("lang_ru" | "lang_en") => {
+                        i18n::set(id == "lang_ru");
+                        for (m, ru, en) in &menu_items { m.set_text(tr(ru, en)); }
+                        for (m, ru, en) in &menu_checks { m.set_text(tr(ru, en)); }
+                        for (m, ru, en) in &menu_subs { m.set_text(tr(ru, en)); }
+                        lang_ru_item.set_checked(i18n::is_ru());
+                        lang_en_item.set_checked(!i18n::is_ru());
+                        // Язык страницы ошибки и подсказок плеера применяется при загрузке страницы.
+                        let _ = proxy.send_event(UserEvent::Load);
+                    }
                     _ => {}
                 },
                 UserEvent::Update(msg) => match msg {
                     update::Msg::Info(title, text) => message(hwnd, &title, &text, MB_ICONINFORMATION),
-                    update::Msg::Error(text) => message(hwnd, "Не удалось установить обновление", &text, MB_ICONERROR),
+                    update::Msg::Error(text) => message(hwnd, tr("Не удалось установить обновление", "Could not install the update"), &text, MB_ICONERROR),
                     update::Msg::Status(s) => window.set_title(s.as_deref().unwrap_or("Lampyris")),
                     update::Msg::Found { release, .. } => {
                         let blocker = update::install_blocker();
@@ -761,7 +806,7 @@ fn main() {
                         Err(e) => {
                             log::error("update", &format!("не удалось запустить установку: {e}"));
                             window.set_title("Lampyris");
-                            message(hwnd, "Не удалось установить обновление", &format!("Не удалось запустить установку: {e}\n\nУстановленная версия не изменена."), MB_ICONERROR);
+                            message(hwnd, tr("Не удалось установить обновление", "Could not install the update"), &crate::trf!("Не удалось запустить установку: {e}\n\nУстановленная версия не изменена.", "Could not start the installation: {e}\n\nThe installed version was not changed."), MB_ICONERROR);
                         }
                     },
                 },
@@ -770,7 +815,7 @@ fn main() {
                     let script = pending_lampa.borrow_mut().take();
                     if let Some(script) = script {
                         if special.get() {
-                            message(hwnd, "Данные Lampa не восстановлены", "Настройки приложения восстановлены, но страница сервера не открылась. Откройте Lampa и восстановите копию ещё раз.", MB_ICONERROR);
+                            message(hwnd, tr("Данные Lampa не восстановлены", "Lampa data was not restored"), tr("Настройки приложения восстановлены, но страница сервера не открылась. Откройте Lampa и восстановите копию ещё раз.", "App settings were restored, but the server page did not open. Open Lampa and restore the backup again."), MB_ICONERROR);
                         } else {
                             let proxy = proxy.clone();
                             let _ = webview.evaluate_script_with_callback(&script, move |res| { let _ = proxy.send_event(UserEvent::LampaRestored(res.trim_matches('"') == "ok")); });
@@ -782,7 +827,7 @@ fn main() {
                     if ok {
                         let _ = proxy.send_event(UserEvent::Load);
                     } else {
-                        message(hwnd, "Данные Lampa не восстановлены", "Настройки приложения восстановлены, но страница сервера открылась с другого адреса, чем в копии. Откройте Lampa и восстановите копию ещё раз.", MB_ICONERROR);
+                        message(hwnd, tr("Данные Lampa не восстановлены", "Lampa data was not restored"), tr("Настройки приложения восстановлены, но страница сервера открылась с другого адреса, чем в копии. Откройте Lampa и восстановите копию ещё раз.", "App settings were restored, but the server page opened from a different address than in the backup. Open Lampa and restore the backup again."), MB_ICONERROR);
                     }
                 }
                 UserEvent::Eval(path) => match std::fs::read_to_string(&path) {
@@ -806,7 +851,7 @@ fn main() {
                             let _ = proxy.send_event(UserEvent::Load);
                         }
                         None => {
-                            let _ = proxy.send_event(UserEvent::ShowHtml(pages::prompt(arg.as_deref().unwrap_or(""), &settings::history(), "Не похоже на адрес сервера")));
+                            let _ = proxy.send_event(UserEvent::ShowHtml(pages::prompt(arg.as_deref().unwrap_or(""), &settings::history(), tr("Не похоже на адрес сервера", "That does not look like a server address"))));
                         }
                     },
                     _ => {}

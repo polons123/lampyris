@@ -363,7 +363,7 @@ final class MpvPlayer {
 
     /// Снимок текущего кадра в родном размере видео в ~/Pictures/Lampyris. Путь формирует только приложение.
     func screenshot() -> [String: Any] {
-        guard handle != nil else { return ["ok": false, "error": "mpv не запущен"] }
+        guard handle != nil else { return ["ok": false, "error": tr("mpv не запущен", "mpv is not running")] }
         let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Lampyris", isDirectory: true)
         do { try FileManager.default.createDirectory(at: pictures, withIntermediateDirectories: true) } catch {
@@ -381,7 +381,7 @@ final class MpvPlayer {
             crop = (num("ml"), num("mt"), num("mr"), num("mb"), w, h)
         }
         guard let data = view?.snapshotPNG(crop: crop) else {
-            return ["ok": false, "error": "не удалось снять кадр"]
+            return ["ok": false, "error": tr("не удалось снять кадр", "could not capture the frame")]
         }
         do { try data.write(to: URL(fileURLWithPath: path)) } catch { return ["ok": false, "error": error.localizedDescription] }
         return ["ok": true, "path": path, "folder": pictures.path, "name": name]

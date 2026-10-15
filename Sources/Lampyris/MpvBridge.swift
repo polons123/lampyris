@@ -161,7 +161,7 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
             let (data, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard status == 200 else { return "{\"error\": \"HTTP \(status)\"}" }
-            guard data.count <= maxResponseBytes else { return "{\"error\": \"ответ слишком большой\"}" }
+            guard data.count <= maxResponseBytes else { return "{\"error\": \"response too large\"}" }
             return String(data: data, encoding: .utf8) ?? "{\"error\": \"encoding\"}"
         } catch {
             return "{\"error\": \"\(error.localizedDescription.replacingOccurrences(of: "\"", with: "'"))\"}"
@@ -180,7 +180,7 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
             let (data, response) = try await URLSession.shared.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard status == 200 else { return "{\"error\": \"HTTP \(status)\"}" }
-            guard data.count <= maxResponseBytes else { return "{\"error\": \"ответ слишком большой\"}" }
+            guard data.count <= maxResponseBytes else { return "{\"error\": \"response too large\"}" }
             return String(data: data, encoding: .utf8) ?? "{\"error\": \"encoding\"}"
         } catch {
             return "{\"error\": \"\(error.localizedDescription.replacingOccurrences(of: "\"", with: "'"))\"}"
@@ -190,12 +190,12 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// Скачивает субтитры (только https с *.strem.io, до 3 МБ) в кэш и подключает к mpv.
     private func loadSubtitle(urlString: String, title: String, lang: String) async -> [String: Any] {
         guard let url = URL(string: urlString), url.scheme == "https", let host = url.host?.lowercased(),
-              host == "strem.io" || host.hasSuffix(".strem.io") else { return ["ok": false, "error": "недопустимый адрес"] }
+              host == "strem.io" || host.hasSuffix(".strem.io") else { return ["ok": false, "error": tr("недопустимый адрес", "invalid address")] }
         let generation = player.openGeneration
         do {
             let (data, response) = try await URLSession.shared.data(for: URLRequest(url: url, timeoutInterval: 15))
             guard (response as? HTTPURLResponse)?.statusCode == 200, data.count > 0, data.count <= 3_000_000 else {
-                return ["ok": false, "error": "не удалось скачать"]
+                return ["ok": false, "error": tr("не удалось скачать", "could not download")]
             }
             let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("Lampyris/subs", isDirectory: true)
@@ -204,10 +204,10 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
             let file = caches.appendingPathComponent("\(id.isEmpty ? UUID().uuidString : id).srt")
             try data.write(to: file)
             // За время скачивания могли открыть другое видео: чужие субтитры не подключаем.
-            guard generation == player.openGeneration else { return ["ok": false, "error": "видео уже сменилось"] }
+            guard generation == player.openGeneration else { return ["ok": false, "error": tr("видео уже сменилось", "the video has already changed")] }
             let cleanTitle = String(title.filter { !$0.isNewline }.prefix(120))
             let cleanLang = String(lang.filter { $0.isLetter }.prefix(3))
-            guard player.addSubtitle(path: file.path, title: cleanTitle, lang: cleanLang) else { return ["ok": false, "error": "mpv не принял файл"] }
+            guard player.addSubtitle(path: file.path, title: cleanTitle, lang: cleanLang) else { return ["ok": false, "error": tr("mpv не принял файл", "mpv did not accept the file")] }
             return ["ok": true]
         } catch {
             return ["ok": false, "error": error.localizedDescription]
@@ -321,7 +321,7 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
             replyHandler(["path": MpvConfig.fileURL.path, "text": MpvConfig.readText(), "profiles": cfg.profileNames], nil)
         case "setConfig":
             guard let text = args.first as? String else { return replyHandler(nil, "no text") }
-            if text.utf8.count > MpvConfig.maxBytes { return replyHandler(["ok": false, "error": "файл больше 64 КиБ"], nil) }
+            if text.utf8.count > MpvConfig.maxBytes { return replyHandler(["ok": false, "error": tr("файл больше 64 КиБ", "the file is larger than 64 KiB")], nil) }
             do { try MpvConfig.writeText(text) } catch { return replyHandler(["ok": false, "error": error.localizedDescription], nil) }
             let cfg = MpvConfig.parse(text)
             replyHandler(["ok": true, "profiles": cfg.profileNames,

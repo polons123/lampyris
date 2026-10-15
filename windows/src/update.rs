@@ -4,6 +4,7 @@
 //! Установленная копия (рядом есть unins000.exe) обновляется тихим запуском нового установщика; portable-копия из .zip — заменой файлов
 //! после выхода приложения.
 
+use crate::i18n::tr;
 use crate::{http, log, settings};
 use ed25519_dalek::{Signature, VerifyingKey};
 use serde_json::{json, Value};
@@ -196,8 +197,8 @@ fn dir_writable(dir: &Path) -> bool {
 
 /// Почему автоустановка невозможна (None — можно). Для установленной копии нужен установщик (он сам запросит права), для portable — запись в папку.
 pub fn install_blocker() -> Option<String> {
-    let Some(dir) = exe_dir() else { return Some("не найдена папка программы".into()) };
-    if is_installed() || dir_writable(&dir) { None } else { Some(format!("нет прав на запись в папку {}", dir.display())) }
+    let Some(dir) = exe_dir() else { return Some(tr("не найдена папка программы", "the program folder was not found").into()) };
+    if is_installed() || dir_writable(&dir) { None } else { Some(crate::trf!("нет прав на запись в папку {}", "no write permission for the folder {}", dir.display())) }
 }
 
 /// Проверка в отдельном потоке; результат приходит через `emit`.
@@ -210,7 +211,7 @@ pub fn check(manual: bool, emit: impl Fn(Msg) + Send + 'static) {
                 if !is_newer(&release.version, &current) {
                     log::info("update", &format!("версия {current} актуальна"));
                     if manual {
-                        emit(Msg::Info("У вас последняя версия".into(), format!("Lampyris {current} — самая новая.")));
+                        emit(Msg::Info(tr("У вас последняя версия", "You are up to date").into(), crate::trf!("Lampyris {current} — самая новая.", "Lampyris {current} is the latest version.")));
                     }
                     return;
                 }
@@ -223,7 +224,7 @@ pub fn check(manual: bool, emit: impl Fn(Msg) + Send + 'static) {
             Err(e) => {
                 log::warn("update", &format!("проверка не удалась: {e}"));
                 if manual {
-                    emit(Msg::Info("Не удалось проверить обновления".into(), e));
+                    emit(Msg::Info(tr("Не удалось проверить обновления", "Could not check for updates").into(), e));
                 }
             }
         }
@@ -233,7 +234,7 @@ pub fn check(manual: bool, emit: impl Fn(Msg) + Send + 'static) {
 fn fetch_release() -> Result<Release, String> {
     let api = env("LAMPA_UPDATE_API").unwrap_or_else(|| format!("https://api.github.com/repos/{REPO}/releases/latest"));
     let data = http::get(&api, 15, MAX_META_BYTES, true)?;
-    parse_release(&data).ok_or_else(|| "не удалось разобрать ответ сервера обновлений".to_string())
+    parse_release(&data).ok_or_else(|| tr("не удалось разобрать ответ сервера обновлений", "could not parse the update server response").to_string())
 }
 
 // ---------- Установка ----------
@@ -245,7 +246,7 @@ pub fn install(release: Release, emit: impl Fn(Msg) + Send + 'static) {
         Err(e) => {
             log::error("update", &format!("установка не удалась: {e}"));
             emit(Msg::Status(None));
-            emit(Msg::Error(format!("{e}\n\nУстановленная версия не изменена.")));
+            emit(Msg::Error(crate::trf!("{e}\n\nУстановленная версия не изменена.", "{e}\n\nThe installed version was not changed.")));
         }
     });
 }
@@ -253,7 +254,7 @@ pub fn install(release: Release, emit: impl Fn(Msg) + Send + 'static) {
 fn prepare(release: &Release, emit: &impl Fn(Msg)) -> Result<Launch, String> {
     let v = &release.version;
     let installed = is_installed();
-    let dir = exe_dir().ok_or("не найдена папка программы")?;
+    let dir = exe_dir().ok_or(tr("не найдена папка программы", "the program folder was not found"))?;
     let arch = arch_label();
     // Полностью портативная копия (рядом portable.txt) обновляется своим архивом: данные в `data` остаются на месте.
     let portable_full = settings::portable_data_dir().is_some();
@@ -268,31 +269,31 @@ fn prepare(release: &Release, emit: &impl Fn(Msg)) -> Result<Launch, String> {
     let url = |n: &str| format!("{base}/v{v}/{n}");
 
     // 1. Подписанный список контрольных сумм.
-    emit(Msg::Status(Some("Lampyris — проверка обновления…".into())));
+    emit(Msg::Status(Some(tr("Lampyris — проверка обновления…", "Lampyris — checking the update…").into())));
     let sums = http::get(&url("SHA256SUMS.txt"), 30, MAX_META_BYTES, false)?;
     let sig = http::get(&url("SHA256SUMS.txt.sig"), 30, MAX_META_BYTES, false)?;
     let key = env("LAMPA_UPDATE_PUBKEY").unwrap_or_else(|| PUBLIC_KEY_HEX.to_string());
     if !verify_signature(&sums, &sig, &key) {
-        return Err("подпись списка контрольных сумм не прошла проверку: файлы релиза не заслуживают доверия".into());
+        return Err(tr("подпись списка контрольных сумм не прошла проверку: файлы релиза не заслуживают доверия", "the checksum list signature did not verify: the release files cannot be trusted").into());
     }
-    let expected = parse_sums(&String::from_utf8_lossy(&sums)).remove(&name).ok_or_else(|| format!("в списке контрольных сумм нет файла {name}"))?;
+    let expected = parse_sums(&String::from_utf8_lossy(&sums)).remove(&name).ok_or_else(|| crate::trf!("в списке контрольных сумм нет файла {name}", "{name} is not in the checksum list"))?;
 
     // 2. Загрузка и сверка SHA-256.
     let stage = std::env::temp_dir().join("Lampyris-update").join(v);
     let _ = std::fs::remove_dir_all(&stage);
-    std::fs::create_dir_all(&stage).map_err(|e| format!("не удалось создать временную папку: {e}"))?;
+    std::fs::create_dir_all(&stage).map_err(|e| crate::trf!("не удалось создать временную папку: {e}", "could not create a temporary folder: {e}"))?;
     let file = stage.join(&name);
     let mut last = u64::MAX;
-    emit(Msg::Status(Some("Lampyris — загрузка обновления 0%".into())));
+    emit(Msg::Status(Some(tr("Lampyris — загрузка обновления 0%", "Lampyris — downloading the update 0%").into())));
     http::download(&url(&name), &file, MAX_PACKAGE_BYTES, |done, total| {
         let pct = total.filter(|t| *t > 0).map(|t| done * 100 / t).unwrap_or(0);
         if pct != last {
             last = pct;
-            emit(Msg::Status(Some(format!("Lampyris — загрузка обновления {pct}%"))));
+            emit(Msg::Status(Some(crate::trf!("Lampyris — загрузка обновления {pct}%", "Lampyris — downloading the update {pct}%"))));
         }
     })?;
     if sha256_file(&file).map_err(|e| e.to_string())? != expected {
-        return Err("контрольная сумма загруженного файла не совпала".into());
+        return Err(tr("контрольная сумма загруженного файла не совпала", "the downloaded file's checksum does not match").into());
     }
 
     if installed {
@@ -328,14 +329,14 @@ fn prepare_portable(stage: &Path, zip: &Path, release: &Release, dir: &Path, arc
         .arg("-xf").arg(zip).arg("-C").arg(&out)
         .creation_flags(CREATE_NO_WINDOW)
         .status()
-        .map_err(|e| format!("не удалось распаковать архив: {e}"))?;
+        .map_err(|e| crate::trf!("не удалось распаковать архив: {e}", "could not unpack the archive: {e}"))?;
     if !status.success() {
-        return Err("не удалось распаковать архив".into());
+        return Err(tr("не удалось распаковать архив", "could not unpack the archive").into());
     }
     let _ = std::fs::remove_file(zip);
     let src = out.join(format!("Lampyris-{}-windows-{arch}{}", release.version, if portable_full { "-portable" } else { "" }));
     if !src.join("Lampyris.exe").is_file() || !src.join("libmpv-2.dll").is_file() {
-        return Err("в архиве нет Lampyris.exe или libmpv-2.dll".into());
+        return Err(tr("в архиве нет Lampyris.exe или libmpv-2.dll", "the archive has no Lampyris.exe or libmpv-2.dll").into());
     }
     let script = stage.join("replace.cmd");
     std::fs::write(&script, REPLACE_SCRIPT.replace('\n', "\r\n")).map_err(|e| e.to_string())?;

@@ -20,7 +20,7 @@ libloading = "0.8"
 ed25519-dalek = "2"
 sha2 = "0.10"
 windows = { version = "0.61", features = [
-    "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Controls", "Win32_UI_Controls_Dialogs", "Win32_System_Power", "Win32_System_Threading", "Win32_Security", "Win32_System_SystemInformation",
+    "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Controls", "Win32_UI_Controls_Dialogs", "Win32_System_Power", "Win32_Globalization", "Win32_System_Threading", "Win32_Security", "Win32_System_SystemInformation",
     "Foundation", "Media", "Media_Playback", "Storage_Streams",
 ] }
 

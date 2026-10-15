@@ -63,7 +63,7 @@ final class Updater {
     private func run(manual: Bool) async {
         guard !busy else { return }
         guard let current = currentVersion, Update.parseVersion(current) != nil else {
-            if manual { alert("Обновления недоступны", "Не удалось определить версию приложения (запуск не из пакета .app).") }
+            if manual { alert(tr("Обновления недоступны", "Updates unavailable"), tr("Не удалось определить версию приложения (запуск не из пакета .app).", "Could not determine the app version (not running from an .app bundle).")) }
             return
         }
         busy = true
@@ -73,7 +73,7 @@ final class Updater {
             defaults.set(Date().timeIntervalSince1970, forKey: lastKey)
             guard Update.isNewer(release.version, than: current) else {
                 Log.log(.info, "update", "версия \(current) актуальна")
-                if manual { alert("У вас последняя версия", "Lampyris \(current) — самая новая.") }
+                if manual { alert(tr("У вас последняя версия", "You are up to date"), tr("Lampyris \(current) — самая новая.", "Lampyris \(current) is the latest version.")) }
                 return
             }
             if !manual && defaults.string(forKey: skippedKey) == release.version { return }
@@ -81,29 +81,29 @@ final class Updater {
             await offer(release, current: current)
         } catch let e as Failure {
             Log.log(.warn, "update", "проверка не удалась: \(e.text)")
-            if manual { alert("Не удалось проверить обновления", e.text) }
+            if manual { alert(tr("Не удалось проверить обновления", "Could not check for updates"), e.text) }
         } catch {
             Log.log(.warn, "update", "проверка не удалась: \(error.localizedDescription)")
-            if manual { alert("Не удалось проверить обновления", error.localizedDescription) }
+            if manual { alert(tr("Не удалось проверить обновления", "Could not check for updates"), error.localizedDescription) }
         }
     }
 
     private func fetchRelease() async throws -> Update.Release {
         let api = env["LAMPA_UPDATE_API"] ?? Update.latestURL
-        guard let url = URL(string: api) else { throw Failure(text: "неверный адрес проверки") }
+        guard let url = URL(string: api) else { throw Failure(text: tr("неверный адрес проверки", "invalid update check address")) }
         var req = URLRequest(url: url, timeoutInterval: 15)
         req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         let data = try await fetch(req)
-        guard let release = Update.parseRelease(data) else { throw Failure(text: "не удалось разобрать ответ сервера обновлений") }
+        guard let release = Update.parseRelease(data) else { throw Failure(text: tr("не удалось разобрать ответ сервера обновлений", "could not parse the update server response")) }
         return release
     }
 
     private func fetch(_ req: URLRequest) async throws -> Data {
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw Failure(text: "сервер обновлений ответил кодом \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+            throw Failure(text: tr("сервер обновлений ответил кодом \((response as? HTTPURLResponse)?.statusCode ?? 0)", "the update server replied with code \((response as? HTTPURLResponse)?.statusCode ?? 0)"))
         }
-        guard data.count <= Update.maxMetaBytes else { throw Failure(text: "ответ слишком большой") }
+        guard data.count <= Update.maxMetaBytes else { throw Failure(text: tr("ответ слишком большой", "the response is too large")) }
         return data
     }
 
@@ -112,12 +112,12 @@ final class Updater {
     /// Установка в пакет на месте возможна, если приложение запущено из .app вне карантинного «переноса» и рядом можно писать.
     private var installBlocker: String? {
         let url = Bundle.main.bundleURL
-        guard url.pathExtension == "app" else { return "приложение запущено не из пакета .app" }
+        guard url.pathExtension == "app" else { return tr("приложение запущено не из пакета .app", "the app is not running from an .app bundle") }
         if url.path.contains("/AppTranslocation/") {
-            return "приложение запущено прямо из загрузок: переместите Lampyris в «Программы» и запустите оттуда"
+            return tr("приложение запущено прямо из загрузок: переместите Lampyris в «Программы» и запустите оттуда", "the app is running straight from Downloads: move Lampyris to Applications and launch it from there")
         }
         if !FileManager.default.isWritableFile(atPath: url.deletingLastPathComponent().path) {
-            return "нет прав на запись в папку \(url.deletingLastPathComponent().path)"
+            return tr("нет прав на запись в папку \(url.deletingLastPathComponent().path)", "no write permission for the folder \(url.deletingLastPathComponent().path)")
         }
         return nil
     }
@@ -125,26 +125,26 @@ final class Updater {
     private func offer(_ release: Update.Release, current: String) async {
         let blocker = installBlocker
         let a = NSAlert()
-        a.messageText = "Доступна версия \(release.version)"
-        var info = "Установлена версия \(current)."
+        a.messageText = tr("Доступна версия \(release.version)", "Version \(release.version) is available")
+        var info = tr("Установлена версия \(current).", "Installed version: \(current).")
         let notes = release.notes.trimmingCharacters(in: .whitespacesAndNewlines)
         if !notes.isEmpty { info += "\n\n" + String(notes.prefix(700)) }
-        if let blocker { info += "\n\nАвтоустановка недоступна: \(blocker)." }
-        else { info += "\n\nНастройки и адрес сервера сохранятся. Приложение закроется и откроется заново." }
+        if let blocker { info += tr("\n\nАвтоустановка недоступна: \(blocker).", "\n\nAutomatic installation is unavailable: \(blocker).") }
+        else { info += tr("\n\nНастройки и адрес сервера сохранятся. Приложение закроется и откроется заново.", "\n\nYour settings and server address will be kept. The app will close and reopen.") }
         a.informativeText = info
         // Ссылка на описание изменений (только https).
         if let page = URL(string: release.pageURL), page.scheme == "https" {
             let link = NSTextField(labelWithAttributedString: NSAttributedString(
-                string: "Что изменилось в этой версии",
+                string: tr("Что изменилось в этой версии", "What changed in this version"),
                 attributes: [.link: page, .font: NSFont.systemFont(ofSize: NSFont.systemFontSize)]))
             link.allowsEditingTextAttributes = true
             link.isSelectable = true
             link.sizeToFit()
             a.accessoryView = link
         }
-        a.addButton(withTitle: blocker == nil ? "Установить и перезапустить" : "Открыть страницу загрузки")
-        a.addButton(withTitle: "Позже")
-        a.addButton(withTitle: "Пропустить эту версию")
+        a.addButton(withTitle: blocker == nil ? tr("Установить и перезапустить", "Install and Restart") : tr("Открыть страницу загрузки", "Open Download Page"))
+        a.addButton(withTitle: tr("Позже", "Later"))
+        a.addButton(withTitle: tr("Пропустить эту версию", "Skip This Version"))
         NSApp.activate(ignoringOtherApps: true)
         switch a.runModal() {
         case .alertFirstButtonReturn:
@@ -163,10 +163,10 @@ final class Updater {
             try await downloadVerifyAndApply(release)
         } catch let e as Failure {
             Log.log(.error, "update", "установка не удалась: \(e.text)")
-            alert("Не удалось установить обновление", e.text + "\n\nУстановленная версия не изменена.")
+            alert(tr("Не удалось установить обновление", "Could not install the update"), e.text + tr("\n\nУстановленная версия не изменена.", "\n\nThe installed version was not changed."))
         } catch {
             Log.log(.error, "update", "установка не удалась: \(error.localizedDescription)")
-            alert("Не удалось установить обновление", error.localizedDescription + "\n\nУстановленная версия не изменена.")
+            alert(tr("Не удалось установить обновление", "Could not install the update"), error.localizedDescription + tr("\n\nУстановленная версия не изменена.", "\n\nThe installed version was not changed."))
         }
     }
 
@@ -180,18 +180,18 @@ final class Updater {
         let name = Update.macAssetName(version: release.version, arm64: isArm)
         guard let sumsURL = Update.assetURL(base: base, version: release.version, name: "SHA256SUMS.txt"),
               let sigURL = Update.assetURL(base: base, version: release.version, name: "SHA256SUMS.txt.sig"),
-              let zipURL = Update.assetURL(base: base, version: release.version, name: name) else { throw Failure(text: "неверный адрес файла обновления") }
+              let zipURL = Update.assetURL(base: base, version: release.version, name: name) else { throw Failure(text: tr("неверный адрес файла обновления", "invalid update file address")) }
 
         // 1. Подписанный список контрольных сумм.
-        statusHandler?("Lampyris — проверка обновления…")
+        statusHandler?(tr("Lampyris — проверка обновления…", "Lampyris — checking the update…"))
         let sums = try await fetch(URLRequest(url: sumsURL, timeoutInterval: 30))
         let sig = try await fetch(URLRequest(url: sigURL, timeoutInterval: 30))
         let key = env["LAMPA_UPDATE_PUBKEY"] ?? Update.publicKeyHex
         guard Update.verifySignature(message: sums, signature: sig, publicKeyHex: key) else {
-            throw Failure(text: "подпись списка контрольных сумм не прошла проверку: файлы релиза не заслуживают доверия")
+            throw Failure(text: tr("подпись списка контрольных сумм не прошла проверку: файлы релиза не заслуживают доверия", "the checksum list signature did not verify: the release files cannot be trusted"))
         }
         guard let expected = Update.parseSums(String(decoding: sums, as: UTF8.self))[name] else {
-            throw Failure(text: "в списке контрольных сумм нет файла \(name)")
+            throw Failure(text: tr("в списке контрольных сумм нет файла \(name)", "\(name) is not in the checksum list"))
         }
 
         // 2. Загрузка архива и сверка SHA-256.
@@ -200,23 +200,23 @@ final class Updater {
         try FileManager.default.createDirectory(at: stage, withIntermediateDirectories: true)
         let zip = stage.appendingPathComponent(name)
         try await download(zipURL, to: zip)
-        guard (try? Update.sha256Hex(of: zip)) == expected else { throw Failure(text: "контрольная сумма загруженного файла не совпала") }
+        guard (try? Update.sha256Hex(of: zip)) == expected else { throw Failure(text: tr("контрольная сумма загруженного файла не совпала", "the downloaded file's checksum does not match")) }
 
         // 3. Распаковка и проверка пакета.
-        statusHandler?("Lampyris — подготовка обновления…")
+        statusHandler?(tr("Lampyris — подготовка обновления…", "Lampyris — preparing the update…"))
         let unpacked = stage.appendingPathComponent("new", isDirectory: true)
         try FileManager.default.createDirectory(at: unpacked, withIntermediateDirectories: true)
-        guard await Self.exec("/usr/bin/ditto", ["-x", "-k", zip.path, unpacked.path]) == 0 else { throw Failure(text: "не удалось распаковать архив") }
+        guard await Self.exec("/usr/bin/ditto", ["-x", "-k", zip.path, unpacked.path]) == 0 else { throw Failure(text: tr("не удалось распаковать архив", "could not unpack the archive")) }
         try? FileManager.default.removeItem(at: zip)
         let newApp = unpacked.appendingPathComponent("Lampyris.app")
         let plist = newApp.appendingPathComponent("Contents/Info.plist")
         guard let info = NSDictionary(contentsOf: plist),
               info["CFBundleIdentifier"] as? String == Bundle.main.bundleIdentifier,
               info["CFBundleShortVersionString"] as? String == release.version else {
-            throw Failure(text: "в архиве не тот пакет (идентификатор или версия не совпали)")
+            throw Failure(text: tr("в архиве не тот пакет (идентификатор или версия не совпали)", "the archive has the wrong package (identifier or version mismatch)"))
         }
         guard await Self.exec("/usr/bin/codesign", ["--verify", "--strict", "--deep", newApp.path]) == 0 else {
-            throw Failure(text: "подпись пакета в архиве нарушена")
+            throw Failure(text: tr("подпись пакета в архиве нарушена", "the package signature in the archive is broken"))
         }
 
         // 4. Замена пакета отдельным процессом после выхода из приложения.
@@ -238,25 +238,25 @@ final class Updater {
     private final class ProgressToken: @unchecked Sendable { var observation: NSKeyValueObservation? }
 
     private func download(_ url: URL, to dest: URL) async throws {
-        statusHandler?("Lampyris — загрузка обновления 0%")
+        statusHandler?(tr("Lampyris — загрузка обновления 0%", "Lampyris — downloading the update 0%"))
         let limit = Update.maxPackageBytes
         let box = ProgressToken()
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
             let task = URLSession.shared.downloadTask(with: url) { tmp, response, error in
                 box.observation?.invalidate()
-                if let error { cont.resume(throwing: Failure(text: "загрузка не удалась: \(error.localizedDescription)")); return }
+                if let error { cont.resume(throwing: Failure(text: tr("загрузка не удалась: \(error.localizedDescription)", "download failed: \(error.localizedDescription)"))); return }
                 guard let tmp, (response as? HTTPURLResponse)?.statusCode == 200 else {
-                    cont.resume(throwing: Failure(text: "сервер ответил кодом \((response as? HTTPURLResponse)?.statusCode ?? 0)")); return
+                    cont.resume(throwing: Failure(text: tr("сервер ответил кодом \((response as? HTTPURLResponse)?.statusCode ?? 0)", "the server replied with code \((response as? HTTPURLResponse)?.statusCode ?? 0)"))); return
                 }
                 let size = (try? FileManager.default.attributesOfItem(atPath: tmp.path)[.size] as? Int) ?? nil
-                guard let size, size <= limit else { cont.resume(throwing: Failure(text: "файл обновления слишком большой")); return }
+                guard let size, size <= limit else { cont.resume(throwing: Failure(text: tr("файл обновления слишком большой", "the update file is too large"))); return }
                 do { try FileManager.default.moveItem(at: tmp, to: dest); cont.resume() }
-                catch { cont.resume(throwing: Failure(text: "не удалось сохранить файл: \(error.localizedDescription)")) }
+                catch { cont.resume(throwing: Failure(text: tr("не удалось сохранить файл: \(error.localizedDescription)", "could not save the file: \(error.localizedDescription)"))) }
             }
             box.observation = task.progress.observe(\.fractionCompleted) { progress, _ in
                 if task.countOfBytesReceived > Int64(limit) { task.cancel() }
                 let percent = Int(progress.fractionCompleted * 100)
-                Task { @MainActor in Updater.shared.statusHandler?("Lampyris — загрузка обновления \(percent)%") }
+                Task { @MainActor in Updater.shared.statusHandler?(tr("Lampyris — загрузка обновления \(percent)%", "Lampyris — downloading the update \(percent)%")) }
             }
             task.resume()
         }

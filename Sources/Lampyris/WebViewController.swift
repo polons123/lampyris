@@ -136,12 +136,12 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         button:hover,button:focus{outline:0;transform:scale(1.05)}
         </style>
         <main>
-        <h1>Не удалось загрузить Lampa</h1>
+        <h1>\(tr("Не удалось загрузить Lampa", "Could not load Lampa"))</h1>
         <p>\(esc(url.absoluteString))</p>
         <p>\(esc(error.localizedDescription))</p>
         <div class="row">
-        <button class="main" autofocus onclick="webkit.messageHandlers.appError.postMessage('retry')">Повторить</button>
-        <button onclick="webkit.messageHandlers.appError.postMessage('change')">Изменить адрес сервера</button>
+        <button class="main" autofocus onclick="webkit.messageHandlers.appError.postMessage('retry')">\(tr("Повторить", "Retry"))</button>
+        <button onclick="webkit.messageHandlers.appError.postMessage('change')">\(tr("Изменить адрес сервера", "Change server address"))</button>
         </div>
         </main>
         """

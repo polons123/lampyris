@@ -1,5 +1,7 @@
 //! Страницы приложения: ввод адреса сервера и ошибка загрузки. Кнопки шлют `{m:"app", a:[…]}` через window.ipc.
 
+use crate::i18n::tr;
+
 fn esc(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
@@ -22,14 +24,17 @@ pub fn error(url: &str, message: &str) -> String {
     format!(
         r#"<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="dark"><style>{STYLE}</style>
 <main>
-<h1>Не удалось загрузить Lampa</h1>
+<h1>{}</h1>
 <p>{}</p><p>{}</p>
 <div class="row">
-<button class="main" autofocus onclick="window.ipc.postMessage(JSON.stringify({{m:'app',a:['retry']}}))">Повторить</button>
-<button onclick="window.ipc.postMessage(JSON.stringify({{m:'app',a:['change']}}))">Изменить адрес сервера</button>
+<button class="main" autofocus onclick="window.ipc.postMessage(JSON.stringify({{m:'app',a:['retry']}}))">{}</button>
+<button onclick="window.ipc.postMessage(JSON.stringify({{m:'app',a:['change']}}))">{}</button>
 </div></main>"#,
+        tr("Не удалось загрузить Lampa", "Could not load Lampa"),
         esc(url),
-        esc(message)
+        esc(message),
+        tr("Повторить", "Retry"),
+        tr("Изменить адрес сервера", "Change server address")
     )
 }
 
@@ -39,16 +44,19 @@ pub fn prompt(initial: &str, history: &[String], note: &str) -> String {
     format!(
         r#"<!doctype html><meta charset="utf-8"><meta name="color-scheme" content="dark"><style>{STYLE}</style>
 <main>
-<h1>Адрес сервера Lampa</h1>
-<p>Например: 192.168.1.10:9118. Ранее введённые адреса — в выпадающем списке.</p>
+<h1>{}</h1>
+<p>{}</p>
 <p style="color:#ff8a80;opacity:1">{}</p>
-<input id="a" list="h" autofocus value="{}" placeholder="адрес:порт" onkeydown="if(event.key==='Enter')go()">
+<input id="a" list="h" autofocus value="{}" placeholder="{}" onkeydown="if(event.key==='Enter')go()">
 <datalist id="h">{options}</datalist>
 <div class="row"><button class="main" onclick="go()">OK</button></div>
 </main>
 <script>function go(){{window.ipc.postMessage(JSON.stringify({{m:'app',a:['server',document.getElementById('a').value]}}))}}</script>"#,
+        tr("Адрес сервера Lampa", "Lampa server address"),
+        tr("Например: 192.168.1.10:9118. Ранее введённые адреса — в выпадающем списке.", "For example: 192.168.1.10:9118. Previously entered addresses are in the drop-down list."),
         esc(note),
-        esc(initial)
+        esc(initial),
+        tr("адрес:порт", "address:port")
     )
 }
 

@@ -26,8 +26,10 @@
     let mainCard = null;
     const fullCards = new Map();
 
+    // Язык берётся из настроек Lampa (как и в остальном интерфейсе плеера).
+    const isRu = () => { try { return String(L.Storage.get("language", "ru") || "ru") === "ru"; } catch (e) { return true; } };
     const speed = (bytes) =>
-      Number.isFinite(bytes) && bytes >= 0 ? ((bytes * 8) / 1000000).toFixed(2) + " Мбит/с" : "—";
+      Number.isFinite(bytes) && bytes >= 0 ? ((bytes * 8) / 1000000).toFixed(2) + (isRu() ? " Мбит/с" : " Mbit/s") : "—";
 
     function cardKey(card) {
       if (!card || card.id === undefined || card.id === null) return null;
@@ -84,7 +86,7 @@
       }
       return {
         image: image || data.img || data.thumbnail || "",
-        title: card.title || card.name || data.first_title || data.title || "Открываем видео",
+        title: card.title || card.name || data.first_title || data.title || (isRu() ? "Открываем видео" : "Opening the video"),
       };
     }
 
@@ -100,11 +102,11 @@
 
     function renderStats(bytes, peers) {
       if (!state) return;
-      state.stats.textContent = "Скорость: " + speed(bytes);
+      state.stats.textContent = (isRu() ? "Скорость: " : "Speed: ") + speed(bytes);
       if (state.data.torrent_hash) {
         const active = peers && Number.isFinite(peers.active_peers) ? peers.active_peers : "—";
         const total = peers && Number.isFinite(peers.total_peers) ? peers.total_peers : "—";
-        state.stats.textContent += " · Пиры: " + active + "/" + total;
+        state.stats.textContent += (isRu() ? " · Пиры: " : " · Peers: ") + active + "/" + total;
       }
     }
 
@@ -168,7 +170,7 @@
       title.textContent = c.title;
       const loading = document.createElement("div");
       loading.className = "desktop-playback-cover__loading";
-      loading.textContent = "Открываем видео…";
+      loading.textContent = isRu() ? "Открываем видео…" : "Opening the video…";
       const stats = document.createElement("div");
       stats.className = "desktop-playback-cover__stats";
       // appendChild, а не append(a, b, c): Lampa подменяет Element.append, и он берёт только первый аргумент.

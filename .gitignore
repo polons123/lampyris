@@ -15,3 +15,4 @@ xcuserdata/
 # Резервные копии настроек Lampyris: содержат адрес сервера и данные входа
 Lampyris-настройки-*.json
 lampyris-backup*.json
+Lampyris-settings-*.json

@@ -91,7 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc func openMpvConf() {
         let url = MpvConfig.fileURL
         if !FileManager.default.fileExists(atPath: url.path) {
-            let template = """
+            let template = tr("""
             # mpv.conf плеера Lampa. Формат: опция=значение, по одной в строке.
             # Опции до первого [раздела] общие; [имя] — профиль, выбирается в Настройки → MPV
             # или клавишей P во время видео. Файл читается при каждом открытии видео.
@@ -101,7 +101,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             # [bright]
             # brightness=20
 
-            """
+            """, """
+            # mpv.conf of the Lampa player. Format: option=value, one per line.
+            # Options before the first [section] are common; [name] is a profile, chosen in Settings → MPV
+            # or with the P key during a video. The file is read each time a video is opened.
+            #
+            # hwdec=videotoolbox
+            #
+            # [bright]
+            # brightness=20
+
+            """)
             try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? template.write(to: url, atomically: true, encoding: .utf8)
         }
@@ -111,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     // MARK: Резервная копия настроек
 
-    private var appVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "разработка" }
+    private var appVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? tr("разработка", "development") }
 
     private func infoAlert(_ title: String, _ text: String, style: NSAlert.Style = .informational) {
         let alert = NSAlert()
@@ -141,18 +151,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         day.locale = Locale(identifier: "en_US_POSIX")
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "Lampyris-настройки-\(day.string(from: Date())).json"
-        panel.message = "Файл содержит адрес сервера и данные Lampa (вход, закладки): храните его в надёжном месте."
+        panel.nameFieldStringValue = tr("Lampyris-настройки-\(day.string(from: Date())).json", "Lampyris-settings-\(day.string(from: Date())).json")
+        panel.message = tr("Файл содержит адрес сервера и данные Lampa (вход, закладки): храните его в надёжном месте.", "The file contains the server address and Lampa data (login, bookmarks): keep it somewhere safe.")
         guard panel.runModal() == .OK, let target = panel.url else { return }
         do {
             let data = try backup.jsonData(app: appVersion, platform: "macos")
             try data.write(to: target, options: .atomic)
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
             Log.log(.info, "backup", "настройки сохранены в файл")
-            let note = lampa == nil ? "\n\nДанные страницы Lampa не вошли: сейчас открыта не страница сервера. Откройте Lampa и повторите, если они нужны." : ""
-            infoAlert("Настройки сохранены", target.path + note)
+            let note = lampa == nil ? tr("\n\nДанные страницы Lampa не вошли: сейчас открыта не страница сервера. Откройте Lampa и повторите, если они нужны.", "\n\nLampa page data was not included: the server page is not open right now. Open Lampa and try again if you need it.") : ""
+            infoAlert(tr("Настройки сохранены", "Settings saved"), target.path + note)
         } catch {
-            infoAlert("Не удалось сохранить настройки", error.localizedDescription, style: .warning)
+            infoAlert(tr("Не удалось сохранить настройки", "Could not save settings"), error.localizedDescription, style: .warning)
         }
     }
 
@@ -162,32 +172,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.json]
         panel.allowsMultipleSelection = false
-        panel.message = "Выберите файл резервной копии Lampyris"
+        panel.message = tr("Выберите файл резервной копии Lampyris", "Choose a Lampyris backup file")
         guard panel.runModal() == .OK, let file = panel.url else { return }
         let backup: Backup
         do {
             let size = (try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int) ?? 0
-            if size > Backup.maxFileBytes { throw Backup.ParseError(message: "файл слишком большой для резервной копии") }
+            if size > Backup.maxFileBytes { throw Backup.ParseError(message: tr("файл слишком большой для резервной копии", "the file is too large for a backup")) }
             backup = try Backup.parse(try Data(contentsOf: file))
         } catch let e as Backup.ParseError {
-            infoAlert("Не удалось прочитать файл", e.message, style: .warning)
+            infoAlert(tr("Не удалось прочитать файл", "Could not read the file"), e.message, style: .warning)
             return
         } catch {
-            infoAlert("Не удалось прочитать файл", error.localizedDescription, style: .warning)
+            infoAlert(tr("Не удалось прочитать файл", "Could not read the file"), error.localizedDescription, style: .warning)
             return
         }
         var parts: [String] = []
-        if let s = backup.serverURL { parts.append("адрес сервера: \(s) и история адресов") }
-        if backup.verboseLog != nil || backup.autoUpdateCheck != nil { parts.append("переключатели меню") }
+        if let s = backup.serverURL { parts.append(tr("адрес сервера: \(s) и история адресов", "server address: \(s) and address history")) }
+        if backup.verboseLog != nil || backup.autoUpdateCheck != nil { parts.append(tr("переключатели меню", "menu switches")) }
         if backup.mpvConf != nil { parts.append("mpv.conf") }
-        if let l = backup.lampa { parts.append("данные Lampa (\(l.items.count) записей: вход, закладки, плагины)") }
-        if parts.isEmpty { infoAlert("В файле нет настроек", "Восстанавливать нечего."); return }
+        if let l = backup.lampa { parts.append(tr("данные Lampa (\(l.items.count) записей: вход, закладки, плагины)", "Lampa data (\(l.items.count) entries: login, bookmarks, plugins)")) }
+        if parts.isEmpty { infoAlert(tr("В файле нет настроек", "The file has no settings"), tr("Восстанавливать нечего.", "Nothing to restore.")); return }
         let confirm = NSAlert()
-        confirm.messageText = "Заменить текущие настройки?"
-        confirm.informativeText = "Будут заменены: " + parts.joined(separator: "; ") + ".\n\nСтраница Lampa перезагрузится."
+        confirm.messageText = tr("Заменить текущие настройки?", "Replace the current settings?")
+        confirm.informativeText = tr("Будут заменены: ", "Will be replaced: ") + parts.joined(separator: "; ") + tr(".\n\nСтраница Lampa перезагрузится.", ".\n\nThe Lampa page will reload.")
         confirm.alertStyle = .warning
-        confirm.addButton(withTitle: "Восстановить")
-        confirm.addButton(withTitle: "Отмена")
+        confirm.addButton(withTitle: tr("Восстановить", "Restore"))
+        confirm.addButton(withTitle: tr("Отмена", "Cancel"))
         guard confirm.runModal() == .alertFirstButtonReturn else { return }
 
         if backup.serverURL != nil || !backup.history.isEmpty { ServerURL.restore(current: backup.serverURL, history: backup.history) }
@@ -198,20 +208,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let hasLampa = backup.lampa != nil
         web.restore(url: backup.serverURL.flatMap { URL(string: $0) }, lampaScript: backup.restoreScript()) { [weak self] ok in
             if hasLampa && !ok {
-                self?.infoAlert("Данные Lampa не восстановлены", "Настройки приложения восстановлены, но страница сервера не открылась или открылась с другого адреса, чем в копии. Откройте Lampa и восстановите копию ещё раз.", style: .warning)
+                self?.infoAlert(tr("Данные Lampa не восстановлены", "Lampa data was not restored"), tr("Настройки приложения восстановлены, но страница сервера не открылась или открылась с другого адреса, чем в копии. Откройте Lampa и восстановите копию ещё раз.", "App settings were restored, but the server page did not open or opened from a different address than in the backup. Open Lampa and restore the backup again."), style: .warning)
             }
         }
     }
 
     /// «О программе»: лицензия и обязательная строка TMDB.
     @objc func showAbout() {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "разработка"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? tr("разработка", "development")
         #if arch(arm64)
         let arch = "Apple Silicon"
         #else
         let arch = "Intel"
         #endif
-        let text = """
+        let text = tr("""
         Версия \(version) (\(arch))
 
         Lampyris: неофициальный клиент Lampa для macOS на Swift и libmpv. Lampa — проект своих авторов, с Lampyris не связан.
@@ -220,7 +230,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         Сведения о сторонних компонентах (mpv, FFmpeg и др.) — в файле THIRD-PARTY.md.
 
         This product uses the TMDB API but is not endorsed or certified by TMDB.
-        """
+        """, """
+        Version \(version) (\(arch))
+
+        Lampyris: an unofficial Lampa client for macOS built with Swift and libmpv. Lampa is a project of its own authors and is not affiliated with Lampyris.
+
+        License: GNU GPL version 3 or later. Source code: github.com/polons123/lampyris. \
+        Information about third-party components (mpv, FFmpeg, etc.) is in THIRD-PARTY.md.
+
+        This product uses the TMDB API but is not endorsed or certified by TMDB.
+        """)
         let credits = NSAttributedString(string: text, attributes: [
             .font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor,
         ])
@@ -244,8 +263,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(toggleVerboseLog) { item.state = Log.isVerboseSetting ? .on : .off }
+        if item.action == #selector(setLanguage(_:)) { item.state = (item.tag == 0) == (Language.current == .ru) ? .on : .off }
         if item.action == #selector(toggleAutoUpdateCheck) { item.state = Updater.shared.autoCheck ? .on : .off }
         return true
+    }
+
+    /// Переключает язык интерфейса: меню собирается заново, страница перезагружается (язык плеера и страницы ошибки применяется при загрузке).
+    @objc func setLanguage(_ sender: NSMenuItem) {
+        let new: Language = sender.tag == 0 ? .ru : .en
+        guard new != Language.current else { return }
+        Language.set(new)
+        buildMenu()
+        webController?.reload()
     }
 
     @objc func showMpvConfFolder() {
@@ -348,51 +377,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let appItem = NSMenuItem()
         main.addItem(appItem)
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "О программе Lampyris", action: #selector(showAbout), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Проверить обновления…", action: #selector(checkForUpdates), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Проверять обновления автоматически", action: #selector(toggleAutoUpdateCheck), keyEquivalent: "")
+        appMenu.addItem(withTitle: tr("О программе Lampyris", "About Lampyris"), action: #selector(showAbout), keyEquivalent: "")
+        appMenu.addItem(withTitle: tr("Проверить обновления…", "Check for Updates…"), action: #selector(checkForUpdates), keyEquivalent: "")
+        appMenu.addItem(withTitle: tr("Проверять обновления автоматически", "Check for Updates Automatically"), action: #selector(toggleAutoUpdateCheck), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Изменить адрес сервера…", action: #selector(changeServer), keyEquivalent: ",")
-        appMenu.addItem(withTitle: "Открыть mpv.conf", action: #selector(openMpvConf), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Показать mpv.conf в Finder", action: #selector(showMpvConfFolder), keyEquivalent: "")
+        appMenu.addItem(withTitle: tr("Изменить адрес сервера…", "Change Server Address…"), action: #selector(changeServer), keyEquivalent: ",")
+        appMenu.addItem(withTitle: tr("Открыть mpv.conf", "Open mpv.conf"), action: #selector(openMpvConf), keyEquivalent: "")
+        appMenu.addItem(withTitle: tr("Показать mpv.conf в Finder", "Show mpv.conf in Finder"), action: #selector(showMpvConfFolder), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Сохранить настройки в файл…", action: #selector(saveBackup), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Восстановить настройки из файла…", action: #selector(restoreBackup), keyEquivalent: "")
+        appMenu.addItem(withTitle: tr("Сохранить настройки в файл…", "Save Settings to File…"), action: #selector(saveBackup), keyEquivalent: "")
+        appMenu.addItem(withTitle: tr("Восстановить настройки из файла…", "Restore Settings from File…"), action: #selector(restoreBackup), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Подробный журнал", action: #selector(toggleVerboseLog), keyEquivalent: "")
-        appMenu.addItem(withTitle: "Показать журнал в Finder", action: #selector(showLogFolder), keyEquivalent: "")
+        let langItem = NSMenuItem(title: "Язык / Language", action: nil, keyEquivalent: "")
+        let langMenu = NSMenu(title: "Язык / Language")
+        for (title, tag) in [("Русский", 0), ("English", 1)] {
+            let it = langMenu.addItem(withTitle: title, action: #selector(setLanguage(_:)), keyEquivalent: "")
+            it.tag = tag
+            it.target = self
+        }
+        langItem.submenu = langMenu
+        appMenu.addItem(langItem)
+        appMenu.addItem(withTitle: tr("Подробный журнал", "Verbose Log"), action: #selector(toggleVerboseLog), keyEquivalent: "")
+        appMenu.addItem(withTitle: tr("Показать журнал в Finder", "Show Log in Finder"), action: #selector(showLogFolder), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Скрыть Lampyris", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: tr("Скрыть Lampyris", "Hide Lampyris"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Выйти из Lampyris", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: tr("Выйти из Lampyris", "Quit Lampyris"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
 
         let editItem = NSMenuItem()
         main.addItem(editItem)
-        let editMenu = NSMenu(title: "Правка")
-        editMenu.addItem(withTitle: "Отменить", action: Selector(("undo:")), keyEquivalent: "z")
-        let redo = editMenu.addItem(withTitle: "Повторить", action: Selector(("redo:")), keyEquivalent: "z")
+        let editMenu = NSMenu(title: tr("Правка", "Edit"))
+        editMenu.addItem(withTitle: tr("Отменить", "Undo"), action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: tr("Повторить", "Redo"), action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "Вырезать", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Копировать", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Вставить", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Выбрать всё", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: tr("Вырезать", "Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: tr("Копировать", "Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: tr("Вставить", "Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: tr("Выбрать всё", "Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
 
         let viewItem = NSMenuItem()
         main.addItem(viewItem)
-        let viewMenu = NSMenu(title: "Вид")
-        let reload = viewMenu.addItem(withTitle: "Перезагрузить", action: #selector(reloadPage), keyEquivalent: "r")
+        let viewMenu = NSMenu(title: tr("Вид", "View"))
+        let reload = viewMenu.addItem(withTitle: tr("Перезагрузить", "Reload"), action: #selector(reloadPage), keyEquivalent: "r")
         reload.target = self
-        let full = viewMenu.addItem(withTitle: "Полный экран", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
+        let full = viewMenu.addItem(withTitle: tr("Полный экран", "Enter Full Screen"), action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         full.keyEquivalentModifierMask = [.command, .control]
         viewItem.submenu = viewMenu
         let windowItem = NSMenuItem()
         main.addItem(windowItem)
-        let windowMenu = NSMenu(title: "Окно")
-        windowMenu.addItem(withTitle: "Свернуть", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        windowMenu.addItem(withTitle: "Закрыть", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let windowMenu = NSMenu(title: tr("Окно", "Window"))
+        windowMenu.addItem(withTitle: tr("Свернуть", "Minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: tr("Закрыть", "Close"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         windowItem.submenu = windowMenu
         NSApp.windowsMenu = windowMenu
         // Пункты, которые выполняет сам делегат, привязываем явно: не зависим от цепочки ответчиков и фокуса страницы.

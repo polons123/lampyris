@@ -49,7 +49,7 @@ struct MpvConfigTests {
         let cfg = MpvConfig.parse(text)
         #expect(cfg.global == [.init(name: "volume", value: "50", op: nil)])
         #expect(cfg.ignored.count == 7)
-        #expect(cfg.ignored.allSatisfy { $0.reason == "опция запрещена" })
+        #expect(cfg.ignored.allSatisfy { $0.reason == tr("опция запрещена", "option is not allowed") })
         #expect(cfg.ignored.first?.line == 1)
     }
 
@@ -84,7 +84,7 @@ struct MpvConfigTests {
         #expect(cfg.profileNames == ["ok"])
         #expect(cfg.profiles["ok"]?.map(\.name) == ["contrast"])
         #expect(cfg.ignored.map(\.line) == [1, 2])
-        #expect(cfg.ignored.first?.reason == "недопустимое имя профиля")
+        #expect(cfg.ignored.first?.reason == tr("недопустимое имя профиля", "invalid profile name"))
     }
 
     @Test("строки, не похожие на «опция=значение», пропускаются, номера строк с единицы")
@@ -98,7 +98,7 @@ struct MpvConfigTests {
     func nulCharacter() {
         let cfg = MpvConfig.parse("volume=1\u{0}2")
         #expect(cfg.global.isEmpty)
-        #expect(cfg.ignored.first?.reason == "недопустимые символы")
+        #expect(cfg.ignored.first?.reason == tr("недопустимые символы", "invalid characters"))
     }
 
     @Test("переводы строк Windows (CRLF)")

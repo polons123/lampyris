@@ -1,4 +1,5 @@
 import AppKit
+import LampyrisCore
 
 /// Адрес сервера Lampa: переменная LAMPA_URL, затем UserDefaults, затем запрос у пользователя.
 /// Адрес хранится только в UserDefaults, в репозиторий не попадает.
@@ -48,8 +49,8 @@ enum ServerURL {
     private static func prompt(initial: String = "") -> URL? {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Адрес сервера Lampa"
-        alert.informativeText = "Например: 192.168.1.10:9118. Ранее введённые адреса — в выпадающем списке."
+        alert.messageText = tr("Адрес сервера Lampa", "Lampa server address")
+        alert.informativeText = tr("Например: 192.168.1.10:9118. Ранее введённые адреса — в выпадающем списке.", "For example: 192.168.1.10:9118. Previously entered addresses are in the drop-down list.")
         let field = NSComboBox(frame: NSRect(x: 0, y: 0, width: 320, height: 26))
         field.completes = true
         field.numberOfVisibleItems = 10
@@ -59,7 +60,7 @@ enum ServerURL {
         field.stringValue = initial.isEmpty ? (known.first ?? "") : initial
         alert.accessoryView = field
         alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Отмена")
+        alert.addButton(withTitle: tr("Отмена", "Cancel"))
         alert.window.initialFirstResponder = field
         guard alert.runModal() == .alertFirstButtonReturn, let u = parse(field.stringValue) else { return nil }
         UserDefaults.standard.set(u.absoluteString, forKey: key)

@@ -84,7 +84,7 @@ public struct MpvConfig {
                 if nameRe.firstMatch(in: name, range: full) == nil {
                     section = nil
                     sectionOK = false
-                    skip("недопустимое имя профиля")
+                    skip(tr("недопустимое имя профиля", "invalid profile name"))
                     continue
                 }
                 section = name
@@ -92,11 +92,11 @@ public struct MpvConfig {
                 if cfg.profiles[name] == nil { cfg.profiles[name] = []; cfg.profileNames.append(name) }
                 continue
             }
-            if !sectionOK { skip("внутри профиля с недопустимым именем"); continue }
+            if !sectionOK { skip(tr("внутри профиля с недопустимым именем", "inside a profile with an invalid name")); continue }
 
             let range = NSRange(line.startIndex..., in: line)
             guard let m = lineRe.firstMatch(in: line, range: range), let nr = Range(m.range(at: 1), in: line) else {
-                skip("не похоже на «опция=значение»")
+                skip(tr("не похоже на «опция=значение»", "does not look like “option=value”"))
                 continue
             }
             var name = line[nr].lowercased()
@@ -116,8 +116,8 @@ public struct MpvConfig {
                 op = String(name[b])
                 name = String(name[a])
             }
-            if blocked.contains(name) { skip("опция запрещена"); continue }
-            if value.contains("\0") { skip("недопустимые символы"); continue }
+            if blocked.contains(name) { skip(tr("опция запрещена", "option is not allowed")); continue }
+            if value.contains("\0") { skip(tr("недопустимые символы", "invalid characters")); continue }
             let entry = Entry(name: name, value: value, op: op)
             if let s = section { cfg.profiles[s, default: []].append(entry) } else { cfg.global.append(entry) }
         }

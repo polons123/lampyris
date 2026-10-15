@@ -2,6 +2,7 @@
 //! Содержит адрес сервера, историю адресов, переключатели, mpv.conf и данные страницы Lampa (localStorage:
 //! вход, закладки, плагины, настройки Lampa). Положение окна не входит: оно зависит от экрана.
 
+use crate::i18n::tr;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 
@@ -68,20 +69,20 @@ impl Backup {
     /// Разбор файла с проверкой: неизвестные поля пропускаются, значения проверяются и ограничиваются по размеру.
     pub fn parse(bytes: &[u8]) -> Result<Backup, String> {
         if bytes.len() as u64 > MAX_FILE_BYTES {
-            return Err("файл слишком большой для резервной копии".into());
+            return Err(tr("файл слишком большой для резервной копии", "the file is too large for a backup").into());
         }
-        let text = std::str::from_utf8(bytes).map_err(|_| "это не файл резервной копии Lampyris".to_string())?;
-        let root: Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|_| "это не файл резервной копии Lampyris".to_string())?;
+        let text = std::str::from_utf8(bytes).map_err(|_| tr("это не файл резервной копии Lampyris", "this is not a Lampyris backup file").to_string())?;
+        let root: Value = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|_| tr("это не файл резервной копии Lampyris", "this is not a Lampyris backup file").to_string())?;
         if root.get("format").and_then(Value::as_str) != Some(FORMAT) {
-            return Err("это не файл резервной копии Lampyris".into());
+            return Err(tr("это не файл резервной копии Lampyris", "this is not a Lampyris backup file").into());
         }
-        let v = root.get("version").and_then(Value::as_u64).filter(|v| *v >= 1).ok_or("в файле не указана версия формата")?;
+        let v = root.get("version").and_then(Value::as_u64).filter(|v| *v >= 1).ok_or(tr("в файле не указана версия формата", "the file does not specify a format version"))?;
         if v > VERSION {
-            return Err("файл создан более новой версией Lampyris: обновите приложение".into());
+            return Err(tr("файл создан более новой версией Lampyris: обновите приложение", "the file was created by a newer version of Lampyris: update the app").into());
         }
         let mut b = Backup::default();
         if let Some(s) = root.get("serverURL").and_then(Value::as_str).filter(|s| !s.is_empty()) {
-            b.server_url = Some(normalized_server(s).ok_or("в файле неверный адрес сервера")?);
+            b.server_url = Some(normalized_server(s).ok_or(tr("в файле неверный адрес сервера", "the file has an invalid server address"))?);
         }
         if let Some(list) = root.get("serverHistory").and_then(Value::as_array) {
             for item in list.iter().take(MAX_HISTORY) {
@@ -94,25 +95,25 @@ impl Backup {
         b.auto_update_check = root.get("autoUpdateCheck").and_then(Value::as_bool);
         if let Some(conf) = root.get("mpvConf").and_then(Value::as_str) {
             if conf.len() > MAX_MPV_CONF {
-                return Err("mpv.conf в файле слишком большой".into());
+                return Err(tr("mpv.conf в файле слишком большой", "mpv.conf in the file is too large").into());
             }
             b.mpv_conf = Some(conf.to_string());
         }
         if let Some(l) = root.get("lampa") {
             if let (Some(origin), Some(items)) = (l.get("origin").and_then(Value::as_str), l.get("localStorage").and_then(Value::as_object)) {
-                let origin = normalized_origin(origin).ok_or("в файле неверный источник данных Lampa")?;
+                let origin = normalized_origin(origin).ok_or(tr("в файле неверный источник данных Lampa", "the file has an invalid Lampa data origin"))?;
                 if items.len() > MAX_LAMPA_ITEMS {
-                    return Err("в файле слишком много записей Lampa".into());
+                    return Err(tr("в файле слишком много записей Lampa", "the file has too many Lampa entries").into());
                 }
                 let mut map = BTreeMap::new();
                 let mut total = 0usize;
                 for (k, val) in items {
-                    let val = val.as_str().filter(|_| k.len() <= 4096).ok_or("в данных Lampa есть запись неверного вида")?;
+                    let val = val.as_str().filter(|_| k.len() <= 4096).ok_or(tr("в данных Lampa есть запись неверного вида", "the Lampa data has a malformed entry"))?;
                     total += k.len() + val.len();
                     map.insert(k.clone(), val.to_string());
                 }
                 if total > MAX_LAMPA_BYTES {
-                    return Err("данные Lampa в файле слишком велики".into());
+                    return Err(tr("данные Lampa в файле слишком велики", "the Lampa data in the file is too large").into());
                 }
                 b.lampa = Some(Lampa { origin, items: map });
             }

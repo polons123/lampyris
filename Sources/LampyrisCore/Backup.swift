@@ -71,18 +71,18 @@ public struct Backup: Equatable {
     /// Разбор файла с проверкой: неизвестные поля пропускаются, значения проверяются и ограничиваются по размеру.
     public static func parse(_ data: Data) throws -> Backup {
         func fail(_ m: String) -> ParseError { ParseError(message: m) }
-        if data.count > maxFileBytes { throw fail("файл слишком большой для резервной копии") }
+        if data.count > maxFileBytes { throw fail(tr("файл слишком большой для резервной копии", "the file is too large for a backup")) }
         var bytes = data
         if bytes.starts(with: [0xEF, 0xBB, 0xBF]) { bytes = bytes.dropFirst(3) }
         guard let root = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any], root["format"] as? String == format else {
-            throw fail("это не файл резервной копии Lampyris")
+            throw fail(tr("это не файл резервной копии Lampyris", "this is not a Lampyris backup file"))
         }
-        guard let v = root["version"] as? Int, v >= 1 else { throw fail("в файле не указана версия формата") }
-        if v > version { throw fail("файл создан более новой версией Lampyris: обновите приложение") }
+        guard let v = root["version"] as? Int, v >= 1 else { throw fail(tr("в файле не указана версия формата", "the file does not specify a format version")) }
+        if v > version { throw fail(tr("файл создан более новой версией Lampyris: обновите приложение", "the file was created by a newer version of Lampyris: update the app")) }
 
         var b = Backup()
         if let s = root["serverURL"] as? String, !s.isEmpty {
-            guard let n = normalizedServer(s) else { throw fail("в файле неверный адрес сервера") }
+            guard let n = normalizedServer(s) else { throw fail(tr("в файле неверный адрес сервера", "the file has an invalid server address")) }
             b.serverURL = n
         }
         if let list = root["serverHistory"] as? [Any] {
@@ -93,20 +93,20 @@ public struct Backup: Equatable {
         b.verboseLog = root["verboseLog"] as? Bool
         b.autoUpdateCheck = root["autoUpdateCheck"] as? Bool
         if let conf = root["mpvConf"] as? String {
-            if conf.utf8.count > maxMpvConfBytes { throw fail("mpv.conf в файле слишком большой") }
+            if conf.utf8.count > maxMpvConfBytes { throw fail(tr("mpv.conf в файле слишком большой", "mpv.conf in the file is too large")) }
             b.mpvConf = conf
         }
         if let l = root["lampa"] as? [String: Any], let origin = l["origin"] as? String, let items = l["localStorage"] as? [String: Any] {
-            guard let o = normalizedOrigin(origin) else { throw fail("в файле неверный источник данных Lampa") }
-            if items.count > maxLampaItems { throw fail("в файле слишком много записей Lampa") }
+            guard let o = normalizedOrigin(origin) else { throw fail(tr("в файле неверный источник данных Lampa", "the file has an invalid Lampa data origin")) }
+            if items.count > maxLampaItems { throw fail(tr("в файле слишком много записей Lampa", "the file has too many Lampa entries")) }
             var map: [String: String] = [:]
             var total = 0
             for (k, any) in items {
-                guard let value = any as? String, k.utf8.count <= 4096 else { throw fail("в данных Lampa есть запись неверного вида") }
+                guard let value = any as? String, k.utf8.count <= 4096 else { throw fail(tr("в данных Lampa есть запись неверного вида", "the Lampa data has a malformed entry")) }
                 total += k.utf8.count + value.utf8.count
                 map[k] = value
             }
-            if total > maxLampaBytes { throw fail("данные Lampa в файле слишком велики") }
+            if total > maxLampaBytes { throw fail(tr("данные Lampa в файле слишком велики", "the Lampa data in the file is too large")) }
             b.lampa = Lampa(origin: o, items: map)
         }
         return b

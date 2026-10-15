@@ -1,6 +1,7 @@
 //! Пользовательский mpv.conf: общие опции и профили `[имя]`. Файл лежит в
 //! %APPDATA%\Lampyris\ и меняется только пользователем. Порт `MpvConfig.swift`.
 
+use crate::i18n::tr;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -134,7 +135,7 @@ pub fn parse(text: &str) -> MpvConfig {
             if !valid_profile_name(&name) {
                 section = None;
                 section_ok = false;
-                skip("недопустимое имя профиля");
+                skip(tr("недопустимое имя профиля", "invalid profile name"));
                 continue;
             }
             section = Some(name.clone());
@@ -146,12 +147,12 @@ pub fn parse(text: &str) -> MpvConfig {
             continue;
         }
         if !section_ok {
-            skip("внутри профиля с недопустимым именем");
+            skip(tr("внутри профиля с недопустимым именем", "inside a profile with an invalid name"));
             continue;
         }
 
         let Some((raw_name, raw_value)) = split_line(line) else {
-            skip("не похоже на «опция=значение»");
+            skip(tr("не похоже на «опция=значение»", "does not look like “option=value”"));
             continue;
         };
         let mut name = raw_name.to_lowercase();
@@ -176,11 +177,11 @@ pub fn parse(text: &str) -> MpvConfig {
             }
         }
         if BLOCKED.contains(&name.as_str()) {
-            skip("опция запрещена");
+            skip(tr("опция запрещена", "option is not allowed"));
             continue;
         }
         if value.contains('\0') {
-            skip("недопустимые символы");
+            skip(tr("недопустимые символы", "invalid characters"));
             continue;
         }
         let entry = Entry { name, value, op };
@@ -241,7 +242,7 @@ mod tests {
         let cfg = parse("script=/tmp/evil.lua\nvo=gpu\ninclude=/etc/other.conf\ninput-ipc-server=/tmp/s\nprofile=x\nscripts-append=/tmp/a.lua\nlog-file=/tmp/l\nvolume=50");
         assert_eq!(cfg.global, vec![e("volume", "50", None)]);
         assert_eq!(cfg.ignored.len(), 7);
-        assert!(cfg.ignored.iter().all(|i| i.reason == "опция запрещена"));
+        assert!(cfg.ignored.iter().all(|i| i.reason == tr("опция запрещена", "option is not allowed")));
         assert_eq!(cfg.ignored[0].line, 1);
     }
 
@@ -275,7 +276,7 @@ mod tests {
         assert_eq!(cfg.profile_names, ["ok"]);
         assert_eq!(names(&cfg.profiles["ok"]), ["contrast"]);
         assert_eq!(cfg.ignored.iter().map(|i| i.line).collect::<Vec<_>>(), [1, 2]);
-        assert_eq!(cfg.ignored[0].reason, "недопустимое имя профиля");
+        assert_eq!(cfg.ignored[0].reason, tr("недопустимое имя профиля", "invalid profile name"));
     }
 
     #[test]
@@ -289,7 +290,7 @@ mod tests {
     fn nul_character() {
         let cfg = parse("volume=1\u{0}2");
         assert!(cfg.global.is_empty());
-        assert_eq!(cfg.ignored[0].reason, "недопустимые символы");
+        assert_eq!(cfg.ignored[0].reason, tr("недопустимые символы", "invalid characters"));
     }
 
     #[test]
