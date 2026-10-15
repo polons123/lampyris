@@ -1,6 +1,6 @@
 //! Проверка и установка обновлений из GitHub Releases (порт `Update.swift` и `Updater.swift`).
 //! Цепочка доверия: подпись Ed25519 файла SHA256SUMS.txt (открытый ключ вшит) → SHA-256 нужного файла из него.
-//! Настройки (%APPDATA%\Lampyris) и данные WebView2 (%LOCALAPPDATA%\Lampyris) лежат вне папки программы и при обновлении не затрагиваются.
+//! Настройки (%APPDATA%\Lampyris) и данные WebView2 (%LOCALAPPDATA%\Lampyris) лежат вне папки программы (в портативном режиме — в `data` рядом с ней) и при обновлении не затрагиваются.
 //! Установленная копия (рядом есть unins000.exe) обновляется тихим запуском нового установщика; portable-копия из .zip — заменой файлов
 //! после выхода приложения.
 
@@ -255,7 +255,15 @@ fn prepare(release: &Release, emit: &impl Fn(Msg)) -> Result<Launch, String> {
     let installed = is_installed();
     let dir = exe_dir().ok_or("не найдена папка программы")?;
     let arch = arch_label();
-    let name = if installed { format!("Lampyris-{v}-windows-{arch}-setup.exe") } else { format!("Lampyris-{v}-windows-{arch}.zip") };
+    // Полностью портативная копия (рядом portable.txt) обновляется своим архивом: данные в `data` остаются на месте.
+    let portable_full = settings::portable_data_dir().is_some();
+    let name = if installed {
+        format!("Lampyris-{v}-windows-{arch}-setup.exe")
+    } else if portable_full {
+        format!("Lampyris-{v}-windows-{arch}-portable.zip")
+    } else {
+        format!("Lampyris-{v}-windows-{arch}.zip")
+    };
     let base = env("LAMPA_UPDATE_BASE").unwrap_or_else(|| format!("https://github.com/{REPO}/releases/download"));
     let url = |n: &str| format!("{base}/v{v}/{n}");
 
@@ -293,7 +301,7 @@ fn prepare(release: &Release, emit: &impl Fn(Msg)) -> Result<Launch, String> {
         log::info("update", &format!("запуск установщика версии {v}"));
         return Ok(Launch { program: file, raw_args: installer_args(&dir, per_user, &stage.join("setup.log")) });
     }
-    prepare_portable(&stage, &file, release, &dir, arch)
+    prepare_portable(&stage, &file, release, &dir, arch, portable_full)
 }
 
 /// Запись об установке Inno Setup есть в HKCU — установка для пользователя; только в HKLM — для всех; нигде — считаем для пользователя.
@@ -313,7 +321,7 @@ fn system32(exe: &str) -> PathBuf {
 }
 
 /// Portable-копия: распаковываем архив и готовим скрипт, который после выхода приложения заменит файлы и запустит новую версию.
-fn prepare_portable(stage: &Path, zip: &Path, release: &Release, dir: &Path, arch: &str) -> Result<Launch, String> {
+fn prepare_portable(stage: &Path, zip: &Path, release: &Release, dir: &Path, arch: &str, portable_full: bool) -> Result<Launch, String> {
     let out = stage.join("new");
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     let status = std::process::Command::new(system32("tar.exe"))
@@ -325,7 +333,7 @@ fn prepare_portable(stage: &Path, zip: &Path, release: &Release, dir: &Path, arc
         return Err("не удалось распаковать архив".into());
     }
     let _ = std::fs::remove_file(zip);
-    let src = out.join(format!("Lampyris-{}-windows-{arch}", release.version));
+    let src = out.join(format!("Lampyris-{}-windows-{arch}{}", release.version, if portable_full { "-portable" } else { "" }));
     if !src.join("Lampyris.exe").is_file() || !src.join("libmpv-2.dll").is_file() {
         return Err("в архиве нет Lampyris.exe или libmpv-2.dll".into());
     }

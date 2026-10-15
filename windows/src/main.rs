@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod backup;
 mod bridge;
 mod config;
+mod filedialog;
 mod http;
 mod log;
 mod mpv;
@@ -29,7 +31,7 @@ use windows::core::HSTRING;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::UI::Controls::{TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TASKDIALOG_NOTIFICATIONS, TDF_ALLOW_DIALOG_CANCELLATION, TDF_ENABLE_HYPERLINKS, TDF_USE_COMMAND_LINKS, TDN_HYPERLINK_CLICKED};
-use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MB_YESNO};
+use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_YESNO};
 use wry::{NewWindowResponse, PageLoadEvent, WebContext, WebViewBuilder};
 
 /// События для главного потока (WebView принадлежит ему): всё остальное шлёт их через прокси.
@@ -56,6 +58,12 @@ pub enum UserEvent {
     Menu(String),
     /// Ход и результат проверки или установки обновления.
     Update(update::Msg),
+    /// Данные страницы Lampa для резервной копии собраны (None — открыта не страница сервера).
+    BackupCollected(Option<backup::Lampa>),
+    /// Данные Lampa записаны в localStorage страницы: true — успешно, страницу нужно перезагрузить.
+    LampaRestored(bool),
+    /// Страница после восстановления адреса загрузилась: записать данные Lampa.
+    ApplyPendingLampa,
 }
 
 /// Команды медиаклавиш (SMTC): пауза и перемотка выполняются в mpv, смена серии передаётся странице.
@@ -257,6 +265,67 @@ fn message(hwnd: isize, title: &str, text: &str, icon: windows::Win32::UI::Windo
     unsafe { MessageBoxW(Some(HWND(hwnd as *mut _)), &HSTRING::from(text), &HSTRING::from(title), MB_OK | icon); }
 }
 
+fn now_secs() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Собирает настройки приложения для резервной копии (данные Lampa добавляются отдельно).
+fn collect_backup(lampa: Option<backup::Lampa>) -> backup::Backup {
+    let conf = config::read_text();
+    backup::Backup {
+        server_url: settings::get_string("serverURL"),
+        history: settings::history(),
+        verbose_log: Some(log::is_verbose_setting()),
+        auto_update_check: Some(update::auto_check()),
+        mpv_conf: (!conf.trim().is_empty()).then_some(conf),
+        lampa,
+    }
+}
+
+fn save_backup(hwnd: isize, lampa: Option<backup::Lampa>) {
+    let day = &backup::iso_utc(now_secs())[..10];
+    let Some(path) = filedialog::save(hwnd, "Сохранить настройки Lampyris", &format!("Lampyris-настройки-{day}.json")) else { return };
+    let has_lampa = lampa.is_some();
+    let text = collect_backup(lampa).to_json(update::VERSION, "windows", &backup::iso_utc(now_secs()));
+    match std::fs::write(&path, text) {
+        Ok(()) => {
+            log::info("backup", "настройки сохранены в файл");
+            let note = if has_lampa { "" } else { "\n\nДанные страницы Lampa не вошли: сейчас открыта не страница сервера. Откройте Lampa и повторите, если они нужны." };
+            message(hwnd, "Настройки сохранены", &format!("{}\n\nФайл содержит адрес сервера и данные Lampa (вход, закладки): храните его в надёжном месте.{note}", path.display()), MB_ICONINFORMATION);
+        }
+        Err(e) => message(hwnd, "Не удалось сохранить настройки", &e.to_string(), MB_ICONERROR),
+    }
+}
+
+/// Выбор файла, разбор и подтверждение; None — отказ или ошибка (о ней пользователь уже уведомлён).
+fn pick_backup(hwnd: isize) -> Option<backup::Backup> {
+    let path = filedialog::open(hwnd, "Выберите файл резервной копии Lampyris")?;
+    let parsed = std::fs::metadata(&path)
+        .map_err(|e| e.to_string())
+        .and_then(|m| if m.len() > backup::MAX_FILE_BYTES { Err("файл слишком большой для резервной копии".to_string()) } else { Ok(()) })
+        .and_then(|_| std::fs::read(&path).map_err(|e| e.to_string()))
+        .and_then(|bytes| backup::Backup::parse(&bytes));
+    let b = match parsed {
+        Ok(b) => b,
+        Err(e) => {
+            message(hwnd, "Не удалось прочитать файл", &e, MB_ICONERROR);
+            return None;
+        }
+    };
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(s) = &b.server_url { parts.push(format!("адрес сервера: {s} и история адресов")); }
+    if b.verbose_log.is_some() || b.auto_update_check.is_some() { parts.push("переключатели меню".into()); }
+    if b.mpv_conf.is_some() { parts.push("mpv.conf".into()); }
+    if let Some(l) = &b.lampa { parts.push(format!("данные Lampa ({} записей: вход, закладки, плагины)", l.items.len())); }
+    if parts.is_empty() {
+        message(hwnd, "В файле нет настроек", "Восстанавливать нечего.", MB_ICONINFORMATION);
+        return None;
+    }
+    let text = format!("Будут заменены: {}.\n\nСтраница Lampa перезагрузится. Продолжить?", parts.join("; "));
+    let answer = unsafe { MessageBoxW(Some(HWND(hwnd as *mut _)), &HSTRING::from(text), &HSTRING::from("Заменить текущие настройки?"), MB_YESNO | MB_ICONWARNING) };
+    (answer == IDYES).then_some(b)
+}
+
 fn main() {
     log::init();
     bridge::clean_subtitle_cache();
@@ -315,6 +384,8 @@ fn main() {
     let trusted: Rc<RefCell<HashSet<String>>> = Rc::new(RefCell::new(HashSet::new()));
     let loading_own = Rc::new(Cell::new(false));
     let special = Rc::new(Cell::new(false)); // показана страница приложения (ошибка, ввод адреса)
+    // Скрипт восстановления localStorage из резервной копии: выполняется один раз после загрузки страницы сервера.
+    let pending_lampa: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
 
     let mut web_context = WebContext::new(Some(settings::local_dir().join("WebView2")));
     let mut wb = WebViewBuilder::new_with_web_context(&mut web_context)
@@ -391,12 +462,13 @@ fn main() {
             }
         })
         .with_on_page_load_handler({
-            let (bridge, loading_own, proxy, is_full) = (bridge.clone(), loading_own.clone(), proxy.clone(), is_full.clone());
+            let (bridge, loading_own, proxy, is_full, pending_lampa) = (bridge.clone(), loading_own.clone(), proxy.clone(), is_full.clone(), pending_lampa.clone());
             move |event, _| match event {
                 // Новый документ в главном кадре: прежняя страница (а с ней и её тюб) уничтожена, плеер без неё не нужен.
                 PageLoadEvent::Started => { if let Some(b) = &bridge { b.page_did_reset(); } }
                 PageLoadEvent::Finished => {
                     loading_own.set(false);
+                    if pending_lampa.borrow().is_some() { let _ = proxy.send_event(UserEvent::ApplyPendingLampa); }
                     // Страница не знает, что окно уже в полном экране (восстановлено при запуске или осталось с прошлой страницы).
                     if is_full.get() { let _ = proxy.send_event(UserEvent::Js("window.__setFullscreen&&window.__setFullscreen(true)".into())); }
                 }
@@ -457,7 +529,7 @@ fn main() {
         let item = |id: &str, text: &str| MenuItem::with_id(id, text, true, None);
         let _ = file.append_items(&[&item("server", "Изменить адрес сервера…\tCtrl+,"), &item("reload", "Перезагрузить\tF5"), &PredefinedMenuItem::separator(), &item("quit", "Выход\tAlt+F4")]);
         let _ = view.append(&item("fullscreen", "Полный экран\tF11"));
-        let _ = tools.append_items(&[&item("conf", "Открыть mpv.conf"), &item("confdir", "Показать mpv.conf в Проводнике"), &PredefinedMenuItem::separator(), &verbose_item, &item("logdir", "Показать журнал в Проводнике")]);
+        let _ = tools.append_items(&[&item("conf", "Открыть mpv.conf"), &item("confdir", "Показать mpv.conf в Проводнике"), &PredefinedMenuItem::separator(), &item("backup", "Сохранить настройки в файл…"), &item("restore", "Восстановить настройки из файла…"), &PredefinedMenuItem::separator(), &verbose_item, &item("logdir", "Показать журнал в Проводнике")]);
         let _ = help.append_items(&[&item("update", "Проверить обновления…"), &auto_update_item, &PredefinedMenuItem::separator(), &item("about", "О программе Lampyris")]);
         let _ = menu.append_items(&[&file, &view, &tools, &help]);
         let _ = unsafe { menu.init_for_hwnd(hwnd) };
@@ -546,6 +618,38 @@ fn main() {
                         if win_state.w > 0 { win_state.save(); }
                         *control_flow = ControlFlow::Exit;
                     }
+                    "backup" => {
+                        // Данные Lampa читаются со страницы, только если это страница доверенного сервера.
+                        let trusted_page = !special.get() && webview.url().ok().and_then(|u| url::Url::parse(&u).ok()).and_then(|u| origin_key(&u)).is_some_and(|k| trusted.borrow().contains(&k));
+                        if trusted_page {
+                            let proxy = proxy.clone();
+                            let _ = webview.evaluate_script_with_callback(backup::COLLECT_SCRIPT, move |res| {
+                                let _ = proxy.send_event(UserEvent::BackupCollected(backup::parse_collected(&res)));
+                            });
+                        } else {
+                            save_backup(hwnd, None);
+                        }
+                    }
+                    "restore" => {
+                        if let Some(b) = pick_backup(hwnd) {
+                            if let Some(s) = &b.server_url { settings::set_value("serverURL", serde_json::json!(s)); }
+                            if !b.history.is_empty() || b.server_url.is_some() { settings::set_value("serverHistory", serde_json::json!(b.history)); }
+                            if let Some(v) = b.verbose_log {
+                                log::set_verbose(v);
+                                verbose_item.set_checked(log::is_verbose_setting());
+                                let _ = webview.evaluate_script(&format!("window.__lv = {}", log::is_verbose()));
+                            }
+                            if let Some(a) = b.auto_update_check {
+                                update::set_auto_check(a);
+                                auto_update_item.set_checked(a);
+                            }
+                            if let Some(conf) = &b.mpv_conf { let _ = config::write_text(conf); }
+                            if let Some(u) = b.server_url.as_deref().and_then(settings::parse_server) { current = Some(u); }
+                            *pending_lampa.borrow_mut() = b.restore_script();
+                            log::info("backup", "настройки восстановлены из файла");
+                            let _ = proxy.send_event(UserEvent::Load);
+                        }
+                    }
                     "conf" => open_mpv_conf(false),
                     "confdir" => open_mpv_conf(true),
                     "verbose" => {
@@ -600,6 +704,26 @@ fn main() {
                         }
                     },
                 },
+                UserEvent::BackupCollected(lampa) => save_backup(hwnd, lampa),
+                UserEvent::ApplyPendingLampa => {
+                    let script = pending_lampa.borrow_mut().take();
+                    if let Some(script) = script {
+                        if special.get() {
+                            message(hwnd, "Данные Lampa не восстановлены", "Настройки приложения восстановлены, но страница сервера не открылась. Откройте Lampa и восстановите копию ещё раз.", MB_ICONERROR);
+                        } else {
+                            let proxy = proxy.clone();
+                            let _ = webview.evaluate_script_with_callback(&script, move |res| { let _ = proxy.send_event(UserEvent::LampaRestored(res.trim_matches('"') == "ok")); });
+                        }
+                    }
+                }
+                UserEvent::LampaRestored(ok) => {
+                    log::info("backup", if ok { "данные Lampa восстановлены" } else { "данные Lampa не восстановлены: страница открыта с другого источника" });
+                    if ok {
+                        let _ = proxy.send_event(UserEvent::Load);
+                    } else {
+                        message(hwnd, "Данные Lampa не восстановлены", "Настройки приложения восстановлены, но страница сервера открылась с другого адреса, чем в копии. Откройте Lampa и восстановите копию ещё раз.", MB_ICONERROR);
+                    }
+                }
                 UserEvent::Eval(path) => match std::fs::read_to_string(&path) {
                     Ok(js) => { let _ = webview.evaluate_script_with_callback(&js, |res| log::info("eval", &res)); }
                     Err(e) => log::error("eval", &format!("{}: {e}", path.display())),

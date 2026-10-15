@@ -14,6 +14,9 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     private var trusted: Set<String> = []
     private var loadingOwn = false
     private var showingError = false
+    /// Скрипт восстановления localStorage из резервной копии: выполняется один раз после загрузки страницы, затем страница перезагружается.
+    private var pendingRestore: String?
+    private var restoreDone: (@MainActor (Bool) -> Void)?
 
     init(url: URL) {
         self.url = url
@@ -174,7 +177,40 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         }
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { loadingOwn = false }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        loadingOwn = false
+        guard let script = pendingRestore else { return }
+        pendingRestore = nil
+        let done = restoreDone
+        restoreDone = nil
+        if showingError { done?(false); return }
+        webView.evaluateJavaScript(script) { [weak self] result, _ in
+            MainActor.assumeIsolated {
+                let ok = (result as? String) == "ok"
+                Log.log(ok ? .info : .warn, "backup", ok ? "данные Lampa восстановлены" : "данные Lampa не восстановлены: страница открыта с другого источника")
+                if ok { self?.loadServer() }
+                done?(ok)
+            }
+        }
+    }
+
+    /// Данные страницы Lampa (localStorage) для резервной копии; nil, если сейчас открыта не страница сервера.
+    func collectLampaStorage(_ done: @escaping @MainActor (Backup.Lampa?) -> Void) {
+        guard !showingError, let u = webView.url, let key = MpvBridge.originKey(u), trusted.contains(key) else { done(nil); return }
+        webView.evaluateJavaScript(Backup.collectScript) { result, _ in
+            let lampa = (result as? String).flatMap(Backup.parseCollected)
+            MainActor.assumeIsolated { done(lampa) }
+        }
+    }
+
+    /// Применяет восстановленный адрес и загружает страницу; данные Lampa записываются после загрузки (`done` получает результат).
+    func restore(url newURL: URL?, lampaScript: String?, done: @escaping @MainActor (Bool) -> Void) {
+        if let newURL { url = newURL }
+        pendingRestore = lampaScript
+        restoreDone = lampaScript == nil ? nil : done
+        loadServer()
+        if lampaScript == nil { done(true) }
+    }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         loadingOwn = false

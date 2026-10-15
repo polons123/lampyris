@@ -11,3 +11,7 @@ xcuserdata/
 /windows/target
 /windows/gen
 /windows/build
+
+# Резервные копии настроек Lampyris: содержат адрес сервера и данные входа
+Lampyris-настройки-*.json
+lampyris-backup*.json

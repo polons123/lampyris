@@ -109,6 +109,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSWorkspace.shared.open([url], withApplicationAt: textEdit, configuration: NSWorkspace.OpenConfiguration())
     }
 
+    // MARK: Резервная копия настроек
+
+    private var appVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "разработка" }
+
+    private func infoAlert(_ title: String, _ text: String, style: NSAlert.Style = .informational) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.alertStyle = style
+        alert.runModal()
+    }
+
+    /// Сохраняет настройки в выбранный файл: адрес сервера и история, переключатели, mpv.conf, данные страницы Lampa.
+    @objc func saveBackup() {
+        guard let web = webController else { return }
+        web.collectLampaStorage { [weak self] lampa in self?.finishSaveBackup(lampa) }
+    }
+
+    private func finishSaveBackup(_ lampa: Backup.Lampa?) {
+        var backup = Backup()
+        backup.serverURL = ServerURL.saved
+        backup.history = ServerURL.history
+        backup.verboseLog = Log.isVerboseSetting
+        backup.autoUpdateCheck = Updater.shared.autoCheck
+        let conf = MpvConfig.readText()
+        backup.mpvConf = conf.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : conf
+        backup.lampa = lampa
+        let day = DateFormatter()
+        day.dateFormat = "yyyy-MM-dd"
+        day.locale = Locale(identifier: "en_US_POSIX")
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "Lampyris-настройки-\(day.string(from: Date())).json"
+        panel.message = "Файл содержит адрес сервера и данные Lampa (вход, закладки): храните его в надёжном месте."
+        guard panel.runModal() == .OK, let target = panel.url else { return }
+        do {
+            let data = try backup.jsonData(app: appVersion, platform: "macos")
+            try data.write(to: target, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: target.path)
+            Log.log(.info, "backup", "настройки сохранены в файл")
+            let note = lampa == nil ? "\n\nДанные страницы Lampa не вошли: сейчас открыта не страница сервера. Откройте Lampa и повторите, если они нужны." : ""
+            infoAlert("Настройки сохранены", target.path + note)
+        } catch {
+            infoAlert("Не удалось сохранить настройки", error.localizedDescription, style: .warning)
+        }
+    }
+
+    /// Восстанавливает настройки из файла, сохранённого «Сохранить настройки…» (на macOS или на Windows).
+    @objc func restoreBackup() {
+        guard let web = webController else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.message = "Выберите файл резервной копии Lampyris"
+        guard panel.runModal() == .OK, let file = panel.url else { return }
+        let backup: Backup
+        do {
+            let size = (try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int) ?? 0
+            if size > Backup.maxFileBytes { throw Backup.ParseError(message: "файл слишком большой для резервной копии") }
+            backup = try Backup.parse(try Data(contentsOf: file))
+        } catch let e as Backup.ParseError {
+            infoAlert("Не удалось прочитать файл", e.message, style: .warning)
+            return
+        } catch {
+            infoAlert("Не удалось прочитать файл", error.localizedDescription, style: .warning)
+            return
+        }
+        var parts: [String] = []
+        if let s = backup.serverURL { parts.append("адрес сервера: \(s) и история адресов") }
+        if backup.verboseLog != nil || backup.autoUpdateCheck != nil { parts.append("переключатели меню") }
+        if backup.mpvConf != nil { parts.append("mpv.conf") }
+        if let l = backup.lampa { parts.append("данные Lampa (\(l.items.count) записей: вход, закладки, плагины)") }
+        if parts.isEmpty { infoAlert("В файле нет настроек", "Восстанавливать нечего."); return }
+        let confirm = NSAlert()
+        confirm.messageText = "Заменить текущие настройки?"
+        confirm.informativeText = "Будут заменены: " + parts.joined(separator: "; ") + ".\n\nСтраница Lampa перезагрузится."
+        confirm.alertStyle = .warning
+        confirm.addButton(withTitle: "Восстановить")
+        confirm.addButton(withTitle: "Отмена")
+        guard confirm.runModal() == .alertFirstButtonReturn else { return }
+
+        if backup.serverURL != nil || !backup.history.isEmpty { ServerURL.restore(current: backup.serverURL, history: backup.history) }
+        if let v = backup.verboseLog { Log.setVerbose(v); web.setPageVerbose(Log.isVerbose) }
+        if let a = backup.autoUpdateCheck { Updater.shared.autoCheck = a }
+        if let conf = backup.mpvConf { try? MpvConfig.writeText(conf) }
+        Log.log(.info, "backup", "настройки восстановлены из файла")
+        let hasLampa = backup.lampa != nil
+        web.restore(url: backup.serverURL.flatMap { URL(string: $0) }, lampaScript: backup.restoreScript()) { [weak self] ok in
+            if hasLampa && !ok {
+                self?.infoAlert("Данные Lampa не восстановлены", "Настройки приложения восстановлены, но страница сервера не открылась или открылась с другого адреса, чем в копии. Откройте Lampa и восстановите копию ещё раз.", style: .warning)
+            }
+        }
+    }
+
     /// «О программе»: лицензия и обязательная строка TMDB.
     @objc func showAbout() {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "разработка"
@@ -261,6 +355,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         appMenu.addItem(withTitle: "Изменить адрес сервера…", action: #selector(changeServer), keyEquivalent: ",")
         appMenu.addItem(withTitle: "Открыть mpv.conf", action: #selector(openMpvConf), keyEquivalent: "")
         appMenu.addItem(withTitle: "Показать mpv.conf в Finder", action: #selector(showMpvConfFolder), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Сохранить настройки в файл…", action: #selector(saveBackup), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Восстановить настройки из файла…", action: #selector(restoreBackup), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Подробный журнал", action: #selector(toggleVerboseLog), keyEquivalent: "")
         appMenu.addItem(withTitle: "Показать журнал в Finder", action: #selector(showLogFolder), keyEquivalent: "")

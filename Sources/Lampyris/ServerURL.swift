@@ -36,6 +36,15 @@ enum ServerURL {
         UserDefaults.standard.set(Array(list.prefix(historyLimit)), forKey: historyKey)
     }
 
+    /// Восстановление из резервной копии: текущий адрес и история заменяются.
+    static func restore(current: String?, history list: [String]) {
+        if let current { UserDefaults.standard.set(current, forKey: key) }
+        UserDefaults.standard.set(Array(list.prefix(historyLimit)), forKey: historyKey)
+    }
+
+    /// Сохранённый адрес для резервной копии (без LAMPA_URL и без запроса).
+    static var saved: String? { UserDefaults.standard.string(forKey: key) }
+
     private static func prompt(initial: String = "") -> URL? {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()

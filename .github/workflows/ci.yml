@@ -113,6 +113,7 @@ jobs:
           name: Lampyris-windows-${{ matrix.arch }}
           path: |
             dist/Lampyris-*-windows-${{ matrix.arch }}.zip
+            dist/Lampyris-*-windows-${{ matrix.arch }}-portable.zip
             dist/Lampyris-*-windows-${{ matrix.arch }}-setup.exe
           if-no-files-found: error
 
@@ -144,6 +145,7 @@ jobs:
           name: Lampyris-windows-arm64
           path: |
             dist/Lampyris-*-windows-arm64.zip
+            dist/Lampyris-*-windows-arm64-portable.zip
             dist/Lampyris-*-windows-arm64-setup.exe
           if-no-files-found: error
 

@@ -1,9 +1,9 @@
 //! Каталоги приложения и настройки (адрес сервера, история адресов, подробный журнал).
-//! Хранятся в %APPDATA%\Lampyris\settings.json, в репозиторий не попадают.
+//! Хранятся в %APPDATA%\Lampyris\settings.json (в портативном режиме — в data\Roaming рядом с программой), в репозиторий не попадают.
 
 use serde_json::{json, Value};
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 static LOCK: Mutex<()> = Mutex::new(());
 const HISTORY_LIMIT: usize = 10;
@@ -12,14 +12,37 @@ fn env_dir(var: &str) -> PathBuf {
     std::env::var_os(var).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// %APPDATA%\Lampyris — mpv.conf и настройки.
-pub fn app_data_dir() -> PathBuf {
-    env_dir("APPDATA").join("Lampyris")
+/// Имя файла-маркера рядом с Lampyris.exe: полностью портативный режим, все данные лежат в папке `data` рядом с программой.
+pub const PORTABLE_MARKER: &str = "portable.txt";
+
+/// Папка `data` полностью портативной копии (рядом с exe лежит `portable.txt`); иначе None.
+pub fn portable_data_dir() -> Option<PathBuf> {
+    static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let exe_dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
+        portable_data_in(&exe_dir)
+    })
+    .clone()
 }
 
-/// %LOCALAPPDATA%\Lampyris — журнал, кэш субтитров, данные WebView2.
+fn portable_data_in(exe_dir: &Path) -> Option<PathBuf> {
+    exe_dir.join(PORTABLE_MARKER).is_file().then(|| exe_dir.join("data"))
+}
+
+/// %APPDATA%\Lampyris (в портативном режиме `data\Roaming`) — mpv.conf и настройки.
+pub fn app_data_dir() -> PathBuf {
+    match portable_data_dir() {
+        Some(d) => d.join("Roaming"),
+        None => env_dir("APPDATA").join("Lampyris"),
+    }
+}
+
+/// %LOCALAPPDATA%\Lampyris (в портативном режиме `data\Local`) — журнал, кэш субтитров, данные WebView2.
 pub fn local_dir() -> PathBuf {
-    env_dir("LOCALAPPDATA").join("Lampyris")
+    match portable_data_dir() {
+        Some(d) => d.join("Local"),
+        None => env_dir("LOCALAPPDATA").join("Lampyris"),
+    }
 }
 
 fn file() -> PathBuf {
@@ -87,7 +110,7 @@ pub fn parse_server(s: &str) -> Option<url::Url> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_server;
+    use super::{parse_server, portable_data_in, PORTABLE_MARKER};
 
     #[test]
     fn server_addresses() {
@@ -95,5 +118,15 @@ mod tests {
         assert_eq!(parse_server(" https://example.org/lampa ").map(|u| u.to_string()).as_deref(), Some("https://example.org/lampa"));
         assert!(parse_server("").is_none());
         assert!(parse_server("ftp://host").is_none());
+    }
+
+    #[test]
+    fn portable_marker() {
+        let d = std::env::temp_dir().join(format!("lampyris-portable-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        assert_eq!(portable_data_in(&d), None);
+        std::fs::write(d.join(PORTABLE_MARKER), b"").unwrap();
+        assert_eq!(portable_data_in(&d), Some(d.join("data")));
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
