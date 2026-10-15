@@ -9,6 +9,7 @@ mod pages;
 mod player;
 mod settings;
 mod smtc;
+mod update;
 
 use bridge::{origin_key, Bridge};
 use player::{Player, Sink};
@@ -22,10 +23,12 @@ use muda::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu
 use tao::dpi::{PhysicalPosition, PhysicalSize};
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
-use tao::platform::windows::{IconExtWindows, WindowExtWindows};
+use tao::platform::windows::{IconExtWindows, WindowBuilderExtWindows, WindowExtWindows};
 use tao::window::{Fullscreen, Icon, Window, WindowBuilder};
 use windows::core::HSTRING;
 use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{LPARAM, WPARAM};
+use windows::Win32::UI::Controls::{TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TASKDIALOG_NOTIFICATIONS, TDF_ALLOW_DIALOG_CANCELLATION, TDF_ENABLE_HYPERLINKS, TDF_USE_COMMAND_LINKS, TDN_HYPERLINK_CLICKED};
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_OK, MB_YESNO};
 use wry::{NewWindowResponse, PageLoadEvent, WebContext, WebViewBuilder};
 
@@ -51,6 +54,8 @@ pub enum UserEvent {
     Window(Vec<Value>),
     /// Пункт меню окна.
     Menu(String),
+    /// Ход и результат проверки или установки обновления.
+    Update(update::Msg),
 }
 
 /// Команды медиаклавиш (SMTC): пауза и перемотка выполняются в mpv, смена серии передаётся странице.
@@ -175,17 +180,87 @@ fn webview_unavailable(hwnd: isize, err: &str) {
 }
 
 fn show_about(hwnd: isize) {
-    let text = "Lampyris: неофициальный нативный клиент Lampa для Windows на Rust, WebView2 и libmpv. Lampa — проект своих авторов, с Lampyris не связан.\n\n\
+    let text = format!("Lampyris {} ({})\n\nLampyris: неофициальный клиент Lampa для Windows на Rust, WebView2 и libmpv. Lampa — проект своих авторов, с Lampyris не связан.\n\n\
 Лицензия: GNU GPL версии 3 или новее. Исходный код: github.com/polons123/lampyris. Сведения о сторонних компонентах (mpv, FFmpeg и др.) — в файле THIRD-PARTY.md.\n\n\
-This product uses the TMDB API but is not endorsed or certified by TMDB.";
+This product uses the TMDB API but is not endorsed or certified by TMDB.", update::VERSION, update::arch_label());
     unsafe {
         MessageBoxW(Some(HWND(hwnd as *mut _)), &HSTRING::from(text), &HSTRING::from("Lampyris"), MB_OK | MB_ICONINFORMATION);
     }
 }
 
+/// Ответ на предложение обновиться.
+enum UpdateAnswer {
+    Install,
+    Later,
+    Skip,
+}
+
+/// Ссылки в окне обновления: открываем только https (адрес приходит из ответа сервера обновлений).
+unsafe extern "system" fn update_dialog_callback(_hwnd: HWND, msg: TASKDIALOG_NOTIFICATIONS, _wparam: WPARAM, lparam: LPARAM, _data: isize) -> windows::core::HRESULT {
+    if msg == TDN_HYPERLINK_CLICKED {
+        let url = unsafe { windows::core::PCWSTR(lparam.0 as *const u16).to_string() }.unwrap_or_default();
+        if url.starts_with("https://") { open_externally(&url); }
+    }
+    windows::core::HRESULT(0)
+}
+
+fn wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// Окно с найденным обновлением (TaskDialog): кнопки «Установить», «Позже», «Пропустить эту версию» и ссылка на описание изменений.
+fn ask_update(hwnd: isize, release: &update::Release, blocker: &Option<String>) -> UpdateAnswer {
+    // Разметка TaskDialog понимает <a>: из описания релиза угловые скобки убираем.
+    let notes: String = release.notes.trim().chars().filter(|c| !matches!(c, '<' | '>')).take(700).collect();
+    let mut text = format!("Установлена версия {}.", update::VERSION);
+    if !notes.is_empty() { text.push_str("\n\n"); text.push_str(&notes); }
+    match blocker {
+        None => text.push_str("\n\nНастройки и адрес сервера сохранятся. Приложение закроется и откроется заново."),
+        Some(b) => text.push_str(&format!("\n\nАвтоустановка недоступна: {b}.")),
+    }
+    if let Ok(u) = url::Url::parse(&release.page_url) {
+        if u.scheme() == "https" { text.push_str(&format!("\n\n<a href=\"{}\">Что изменилось в этой версии</a>", u.as_str())); }
+    }
+    let title = wide("Lampyris — обновление");
+    let instruction = wide(&format!("Доступна версия {}", release.version));
+    let content = wide(&text);
+    let first = wide(if blocker.is_none() { "Установить и перезапустить" } else { "Открыть страницу загрузки" });
+    let later = wide("Напомнить позже");
+    let skip = wide("Пропустить эту версию");
+    let buttons = [
+        TASKDIALOG_BUTTON { nButtonID: 100, pszButtonText: windows::core::PCWSTR(first.as_ptr()) },
+        TASKDIALOG_BUTTON { nButtonID: 101, pszButtonText: windows::core::PCWSTR(later.as_ptr()) },
+        TASKDIALOG_BUTTON { nButtonID: 102, pszButtonText: windows::core::PCWSTR(skip.as_ptr()) },
+    ];
+    let mut cfg: TASKDIALOGCONFIG = unsafe { std::mem::zeroed() };
+    cfg.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as u32;
+    cfg.hwndParent = HWND(hwnd as *mut _);
+    cfg.dwFlags = TDF_ENABLE_HYPERLINKS | TDF_ALLOW_DIALOG_CANCELLATION | TDF_USE_COMMAND_LINKS;
+    cfg.pszWindowTitle = windows::core::PCWSTR(title.as_ptr());
+    cfg.pszMainInstruction = windows::core::PCWSTR(instruction.as_ptr());
+    cfg.pszContent = windows::core::PCWSTR(content.as_ptr());
+    cfg.cButtons = buttons.len() as u32;
+    cfg.pButtons = buttons.as_ptr();
+    cfg.nDefaultButton = 100;
+    cfg.pfCallback = Some(update_dialog_callback);
+    let mut pressed = 0i32;
+    match unsafe { TaskDialogIndirect(&cfg, Some(&mut pressed), None, None) } {
+        Ok(()) => match pressed { 100 => UpdateAnswer::Install, 102 => UpdateAnswer::Skip, _ => UpdateAnswer::Later },
+        Err(e) => {
+            log::error("update", &format!("TaskDialog не открылся: {e}"));
+            UpdateAnswer::Later
+        }
+    }
+}
+
+fn message(hwnd: isize, title: &str, text: &str, icon: windows::Win32::UI::WindowsAndMessaging::MESSAGEBOX_STYLE) {
+    unsafe { MessageBoxW(Some(HWND(hwnd as *mut _)), &HSTRING::from(text), &HSTRING::from(title), MB_OK | icon); }
+}
+
 fn main() {
     log::init();
     bridge::clean_subtitle_cache();
+    update::clean_cache();
     let test_source = std::env::var("LAMPA_MPV_TEST").ok();
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
@@ -195,7 +270,9 @@ fn main() {
     let saved = WinState::load().filter(|w| w.visible_on(&monitors));
     // Значок окна берётся из ресурса exe (build.rs встраивает icons/icon.ico под номером 1).
     let mut builder = WindowBuilder::new().with_title("Lampyris")
-        .with_window_icon(Icon::from_resource(1, None).ok());
+        .with_window_icon(Icon::from_resource(1, Some(PhysicalSize::new(32, 32))).ok())
+        // Значок на панели задач: крупный (Windows сама уменьшит под масштаб экрана).
+        .with_taskbar_icon(Icon::from_resource(1, Some(PhysicalSize::new(256, 256))).ok());
     builder = match saved {
         Some(w) => builder.with_inner_size(PhysicalSize::new(w.w, w.h)).with_position(PhysicalPosition::new(w.x, w.y)).with_maximized(w.maximized),
         None => builder.with_inner_size(tao::dpi::LogicalSize::new(1280.0, 720.0)),
@@ -371,6 +448,7 @@ fn main() {
     // Меню окна (в полном экране скрывается). Сочетания клавиш обрабатывает страница (window.js), поэтому здесь они только подписаны.
     let menu = Menu::new();
     let verbose_item = CheckMenuItem::with_id("verbose", "Подробный журнал", true, log::is_verbose_setting(), None);
+    let auto_update_item = CheckMenuItem::with_id("updateauto", "Проверять обновления автоматически", true, update::auto_check(), None);
     {
         let file = Submenu::new("Файл", true);
         let view = Submenu::new("Вид", true);
@@ -380,7 +458,7 @@ fn main() {
         let _ = file.append_items(&[&item("server", "Изменить адрес сервера…\tCtrl+,"), &item("reload", "Перезагрузить\tF5"), &PredefinedMenuItem::separator(), &item("quit", "Выход\tAlt+F4")]);
         let _ = view.append(&item("fullscreen", "Полный экран\tF11"));
         let _ = tools.append_items(&[&item("conf", "Открыть mpv.conf"), &item("confdir", "Показать mpv.conf в Проводнике"), &PredefinedMenuItem::separator(), &verbose_item, &item("logdir", "Показать журнал в Проводнике")]);
-        let _ = help.append(&item("about", "О программе Lampyris"));
+        let _ = help.append_items(&[&item("update", "Проверить обновления…"), &auto_update_item, &PredefinedMenuItem::separator(), &item("about", "О программе Lampyris")]);
         let _ = menu.append_items(&[&file, &view, &tools, &help]);
         let _ = unsafe { menu.init_for_hwnd(hwnd) };
         let proxy = proxy.clone();
@@ -390,6 +468,15 @@ fn main() {
         window.set_fullscreen(Some(Fullscreen::Borderless(None)));
         is_full.set(true);
         let _ = unsafe { menu.hide_for_hwnd(hwnd) };
+    }
+
+    // Фоновая проверка обновлений: через несколько секунд после запуска, не чаще раза в сутки.
+    if update::check_due() {
+        let proxy = proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(6));
+            update::check(false, move |m| { let _ = proxy.send_event(UserEvent::Update(m)); });
+        });
     }
 
     let mut current = server;
@@ -471,7 +558,47 @@ fn main() {
                         let _ = std::process::Command::new("explorer").arg(log::folder()).spawn();
                     }
                     "about" => show_about(hwnd),
+                    "update" => {
+                        let proxy = proxy.clone();
+                        update::check(true, move |m| { let _ = proxy.send_event(UserEvent::Update(m)); });
+                    }
+                    "updateauto" => update::set_auto_check(!update::auto_check()),
                     _ => {}
+                },
+                UserEvent::Update(msg) => match msg {
+                    update::Msg::Info(title, text) => message(hwnd, &title, &text, MB_ICONINFORMATION),
+                    update::Msg::Error(text) => message(hwnd, "Не удалось установить обновление", &text, MB_ICONERROR),
+                    update::Msg::Status(s) => window.set_title(s.as_deref().unwrap_or("Lampyris")),
+                    update::Msg::Found { release, .. } => {
+                        let blocker = update::install_blocker();
+                        let answer = ask_update(hwnd, &release, &blocker);
+                        if let UpdateAnswer::Install = answer {
+                            if blocker.is_none() {
+                                let proxy = proxy.clone();
+                                update::install(release, move |m| { let _ = proxy.send_event(UserEvent::Update(m)); });
+                            } else {
+                                open_externally(&release.page_url);
+                            }
+                        } else if let UpdateAnswer::Skip = answer {
+                            update::skip_version(&release.version);
+                        }
+                    }
+                    update::Msg::Launch(launch) => match update::spawn(&launch) {
+                        Ok(()) => {
+                            // Выходим так же, как из меню: останавливаем плеер и запоминаем окно; дальше работает установщик или скрипт замены.
+                            if let Some(p) = &player { p.shutdown(); }
+                            win_state.maximized = window.is_maximized();
+                            win_state.fullscreen = window.fullscreen().is_some();
+                            win_state.track(&window);
+                            if win_state.w > 0 { win_state.save(); }
+                            *control_flow = ControlFlow::Exit;
+                        }
+                        Err(e) => {
+                            log::error("update", &format!("не удалось запустить установку: {e}"));
+                            window.set_title("Lampyris");
+                            message(hwnd, "Не удалось установить обновление", &format!("Не удалось запустить установку: {e}\n\nУстановленная версия не изменена."), MB_ICONERROR);
+                        }
+                    },
                 },
                 UserEvent::Eval(path) => match std::fs::read_to_string(&path) {
                     Ok(js) => { let _ = webview.evaluate_script_with_callback(&js, |res| log::info("eval", &res)); }

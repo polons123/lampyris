@@ -4,6 +4,7 @@ fn main() {
     let parts: Vec<u64> = version.split('.').map(|p| p.parse().expect("версия в scripts/VERSION должна быть вида 1.2.3")).collect();
     assert_eq!(parts.len(), 3, "версия в scripts/VERSION должна быть вида 1.2.3");
     println!("cargo:rerun-if-changed=../scripts/VERSION");
+    println!("cargo:rustc-env=LAMPYRIS_VERSION={version}");
     // Значок и манифест exe (DPI, версии Windows, UTF-8, визуальные стили) — только при сборке под Windows.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let mut res = winresource::WindowsResource::new();

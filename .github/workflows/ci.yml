@@ -170,7 +170,16 @@ jobs:
       - name: Контрольные суммы и релиз
         env:
           GH_TOKEN: ${{ github.token }}
+          # Закрытый ключ Ed25519 (PEM) для подписи списка контрольных сумм; открытый ключ вшит в приложения (LampyrisCore/Update.swift, windows/src/update.rs).
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
         run: |
           cd dist
           shasum -a 256 *.dmg *.zip *-setup.exe > SHA256SUMS.txt
-          gh release create "${{ github.ref_name }}" *.dmg *.zip *-setup.exe SHA256SUMS.txt --repo "${{ github.repository }}" --generate-notes
+          # Приложения обновляются сами и доверяют только подписанному SHA256SUMS.txt: без ключа релиз не выпускаем.
+          if [ -z "$UPDATE_SIGNING_KEY" ]; then echo "Нет секрета UPDATE_SIGNING_KEY" >&2; exit 1; fi
+          umask 077
+          printf '%s\n' "$UPDATE_SIGNING_KEY" > "$RUNNER_TEMP/update-key.pem"
+          openssl pkeyutl -sign -inkey "$RUNNER_TEMP/update-key.pem" -rawin -in SHA256SUMS.txt -out SHA256SUMS.txt.sig
+          rm -f "$RUNNER_TEMP/update-key.pem"
+          [ "$(wc -c < SHA256SUMS.txt.sig)" -eq 64 ]
+          gh release create "${{ github.ref_name }}" *.dmg *.zip *-setup.exe SHA256SUMS.txt SHA256SUMS.txt.sig --repo "${{ github.repository }}" --generate-notes

@@ -39,6 +39,14 @@ mpv встраивается в главное окно через `--wid` и р
 ## Медиаклавиши и «Сейчас играет»
 `smtc.rs` использует SystemMediaTransportControls (через `MediaPlayer` с отключённым `CommandManager`): ⏯ и пауза выполняются в mpv, перемотка и ползунок позиции тоже (кнопки вперёд и назад — ±10 с), ⏭ и ⏮ передаются странице (`window.__mpvRemote`, `Lampa.PlayerPlaylist`). Название, подпись, длительность и позиция берутся из карточки и событий mpv, постер скачивает приложение (https, до 2 МБ, проверка сигнатуры изображения, ответ предыдущего видео не заменяет постер нового).
 
+## Обновления
+`src/update.rs` повторяет логику macOS (`Update.swift` и `Updater.swift`): проверка GitHub Releases (`api.github.com/.../releases/latest`) раз в сутки и по пункту «Справка → Проверить обновления…», подписанный `SHA256SUMS.txt` (Ed25519, ключ вшит в `PUBLIC_KEY_HEX`) → SHA-256 файла. Диалог через `MessageBoxW` (Да — установить, Нет — позже, Отмена — пропустить версию), ход загрузки показывается в заголовке окна.
+
+- Установленная копия (рядом `unins000.exe`): запускается `…-setup.exe` с `/VERYSILENT /CLOSEAPPLICATIONS /relaunch=1 /DIR=<папка> /CURRENTUSER|/ALLUSERS`. Режим берётся из записи об установке в HKCU или HKLM (для «всех пользователей» установщик сам запросит права). После установки `lampyris.iss` запускает программу заново. Журнал установщика: `%TEMP%\Lampyris-update\<версия>\setup.log`.
+- Портативная копия: `.zip` распаковывается `tar.exe`, скрипт `replace.cmd` ждёт выхода приложения, меняет `Lampyris.exe` и `libmpv-2.dll` (с откатом при ошибке) и запускает новую версию. Если в папку нельзя писать, открывается страница релиза.
+
+Настройки (`%APPDATA%\Lampyris`) и данные WebView2 (`%LOCALAPPDATA%\Lampyris`) лежат вне папки программы. Ключи `updateAutoCheck`, `updateLastCheck`, `updateSkippedVersion` хранятся в `settings.json`. Переменные для проверки те же, что на macOS (`LAMPA_UPDATE_API`, `LAMPA_UPDATE_BASE`, `LAMPA_UPDATE_PUBKEY`, `LAMPA_UPDATE_VERSION`).
+
 ## Сборка и выпуск
 Пакет `Lampyris-<версия>-windows-<x64|arm64>.zip` (Lampyris.exe, libmpv-2.dll, LICENSE, THIRD-PARTY.md) собирает `windows\scripts\build-windows.ps1 -Arch x64|arm64`. Версия берётся из `scripts/VERSION` (общей с macOS), версия в `windows/Cargo.toml` обновляется вручную. libmpv: сборки mpv-winbuild (zhongfly, GPL-вариант с FFmpeg), тег, файл и SHA-256 зафиксированы в `scripts/libmpv.lock`; обновление: `fetch-libs.ps1 -Arch x64 -Update` (старые теги upstream периодически удаляет, тогда сборка не найдёт файл: обновите запись осознанно). Нужны Rust (цели `x86_64-pc-windows-msvc` и `aarch64-pc-windows-msvc`) и Visual Studio Build Tools с C++. Файлы `.ps1` хранятся в UTF-8 с BOM: Windows PowerShell 5.1 без него читает кириллицу как ANSI и не разбирает скрипт.
 

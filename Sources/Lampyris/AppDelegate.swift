@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         Self.migrateLegacyData()
         Self.cleanSubtitleCache()
+        Updater.cleanCache()
         if let src = ProcessInfo.processInfo.environment["LAMPA_MPV_TEST"] {
             runMpvTest(source: src)
             return
@@ -37,6 +38,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.delegate = self
         window.makeKeyAndOrderFront(nil)
         self.window = window
+        Updater.shared.statusHandler = { [weak window] status in window?.title = status ?? "Lampyris" }
+        // Проверка обновлений в фоне: не раньше, чем окно покажется и страница начнёт загружаться.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { Updater.shared.checkOnLaunch() }
         NSApp.activate(ignoringOtherApps: true)
         // Полноэкранный режим восстанавливается после показа окна.
         if UserDefaults.standard.bool(forKey: Self.fullScreenKey) {
@@ -107,8 +111,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     /// «О программе»: лицензия и обязательная строка TMDB.
     @objc func showAbout() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "разработка"
+        #if arch(arm64)
+        let arch = "Apple Silicon"
+        #else
+        let arch = "Intel"
+        #endif
         let text = """
-        Lampyris: неофициальный нативный клиент Lampa для macOS на Swift и libmpv. Lampa — проект своих авторов, с Lampyris не связан.
+        Версия \(version) (\(arch))
+
+        Lampyris: неофициальный клиент Lampa для macOS на Swift и libmpv. Lampa — проект своих авторов, с Lampyris не связан.
 
         Лицензия: GNU GPL версии 3 или новее. Исходный код: github.com/polons123/lampyris. \
         Сведения о сторонних компонентах (mpv, FFmpeg и др.) — в файле THIRD-PARTY.md.
@@ -120,6 +132,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         ])
         NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Lampyris", .credits: credits])
     }
+
+    @objc func checkForUpdates() { Updater.shared.checkManually() }
+
+    @objc func toggleAutoUpdateCheck() { Updater.shared.autoCheck.toggle() }
 
     @objc func toggleVerboseLog() {
         let on = !Log.isVerboseSetting
@@ -134,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(toggleVerboseLog) { item.state = Log.isVerboseSetting ? .on : .off }
+        if item.action == #selector(toggleAutoUpdateCheck) { item.state = Updater.shared.autoCheck ? .on : .off }
         return true
     }
 
@@ -238,6 +255,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         main.addItem(appItem)
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "О программе Lampyris", action: #selector(showAbout), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Проверить обновления…", action: #selector(checkForUpdates), keyEquivalent: "")
+        appMenu.addItem(withTitle: "Проверять обновления автоматически", action: #selector(toggleAutoUpdateCheck), keyEquivalent: "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Изменить адрес сервера…", action: #selector(changeServer), keyEquivalent: ",")
         appMenu.addItem(withTitle: "Открыть mpv.conf", action: #selector(openMpvConf), keyEquivalent: "")

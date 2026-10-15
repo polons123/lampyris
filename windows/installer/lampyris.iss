@@ -18,7 +18,8 @@ DefaultGroupName=Lampyris
 DisableProgramGroupPage=yes
 ; Установка для текущего пользователя без прав администратора; в диалоге можно выбрать установку для всех.
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
+; commandline нужен автообновлению: оно запускает установщик с /CURRENTUSER или /ALLUSERS по режиму уже установленной копии.
+PrivilegesRequiredOverridesAllowed=commandline dialog
 #if Arch == "arm64"
 ArchitecturesAllowed=arm64
 ArchitecturesInstallIn64BitMode=arm64
@@ -54,6 +55,8 @@ Name: "{autodesktop}\Lampyris"; Filename: "{app}\Lampyris.exe"; Tasks: desktopic
 
 [Run]
 Filename: "{app}\Lampyris.exe"; Description: "{cm:LaunchProgram,Lampyris}"; Flags: nowait postinstall skipifsilent
+; Автообновление запускает установщик тихо с /relaunch=1: после установки открываем программу снова (от имени пользователя, не администратора).
+Filename: "{app}\Lampyris.exe"; Description: "{cm:LaunchProgram,Lampyris}"; Flags: nowait postinstall runasoriginaluser; Check: RelaunchRequested
 
 ; Настройки и журнал (%APPDATA%\Lampyris, %LOCALAPPDATA%\Lampyris) при удалении остаются: там адрес сервера и вход в Lampa.
 
@@ -68,6 +71,11 @@ begin
     Result := (v <> '') and (v <> '0.0.0.0');
   if (not Result) and RegQueryStringValue(HKCU, 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', v) then
     Result := (v <> '') and (v <> '0.0.0.0');
+end;
+
+function RelaunchRequested: Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|0}') = '1';
 end;
 
 function InitializeSetup: Boolean;

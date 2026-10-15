@@ -64,3 +64,8 @@ STAGE="$ROOT/build/dmg-$ARCH"; rm -rf "$STAGE"; mkdir -p "$STAGE"; cp -R "$APP" 
 hdiutil create -quiet -volname "Lampyris" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
 echo
 du -sh "$APP" "$ZIP" "$DMG" | sed "s#$ROOT/##"
+
+# Чистим распакованные копии .app: Spotlight/Launchpad показывают их как отдельные приложения.
+# Готовые артефакты — .zip и .dmg в dist/. Чтобы оставить .app для отладки: KEEP_APP=1.
+rm -rf "$STAGE"
+[ -n "${KEEP_APP:-}" ] || rm -rf "$ROOT/dist/$ARCH"
