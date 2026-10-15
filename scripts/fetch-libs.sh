@@ -21,7 +21,7 @@ echo "Набор IINA ($ARCH): $(wc -l < "$DEST/filelist.txt" | tr -d ' ') би�
 
 # Загрузка недостающих файлов (5 параллельно).
 tr -d '\r' < "$DEST/filelist.txt" | while read -r f; do [ -n "$f" ] && [ ! -s "$DEST/$f" ] && echo "$f"; done \
-  | xargs -P5 -I{} sh -c 'curl -fsSL --retry 3 -o "$0/{}" "$1/{}" && echo "  скачано {}"' "$DEST" "$BASE" || true
+  | xargs -P5 -I{} sh -c 'curl -fsSL --retry 5 --retry-all-errors -o "$0/{}.part" "$1/{}" && mv "$0/{}.part" "$0/{}" && echo "  скачано {}"' "$DEST" "$BASE" || true
 
 # Все файлы из списка должны быть на месте.
 while read -r f; do [ -s "$DEST/$f" ] || { echo "Нет файла $f" >&2; exit 1; }; done < "$DEST/filelist.txt"
@@ -31,7 +31,8 @@ if [ "$MODE" = "--update" ]; then
   echo "Контрольные суммы записаны в $LOCK"
 else
   [ -f "$LOCK" ] || { echo "Нет $LOCK: сначала выполните $0 $ARCH --update" >&2; exit 1; }
-  (cd "$DEST" && shasum -a 256 -c "$LOCK" --quiet) && echo "Контрольные суммы совпали ($ARCH)"
+  # Несовпадение суммы обязано остановить сборку (в списке «a && b» ошибка не прерывает скрипт при set -e).
+  if (cd "$DEST" && shasum -a 256 -c "$LOCK" --quiet); then echo "Контрольные суммы совпали ($ARCH)"; else echo "Контрольные суммы НЕ совпали ($ARCH)" >&2; exit 1; fi
   # Лишнего в списке быть не должно: список файлов в lock и на сервере одинаков.
   diff <(awk '{print $2}' "$LOCK" | sort) <(sort "$DEST/filelist.txt") >/dev/null || { echo "Состав набора изменился" >&2; exit 1; }
 fi
