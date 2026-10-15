@@ -1032,6 +1032,7 @@
   // воспроизведения они скрываются, а после восстанавливаются.
   const PLAYER_Z = 50;
   const hidden = new Map();
+  const HIDE_PROPS = [["visibility", "hidden"], ["opacity", "0"], ["pointer-events", "none"]];
   let sweepTimer = null;
 
   function sweep() {
@@ -1046,11 +1047,14 @@
       if ((Number.isNaN(z) ? 0 : z) > PLAYER_Z) return;
       const r = el.getBoundingClientRect();
       if (r.width < innerWidth * 0.5 || r.height < innerHeight * 0.5) return;
-      hidden.set(el, {
-        value: el.style.getPropertyValue("visibility"),
-        priority: el.style.getPropertyPriority("visibility"),
+      // Только visibility мало: Lampa сама ставит visibility: visible на свои элементы layer--visible
+      // (карточки файлов торрента), и они остаются видны поверх скрытого родителя. opacity скрывает всё поддерево.
+      const saved = {};
+      HIDE_PROPS.forEach(([name, value]) => {
+        saved[name] = { value: el.style.getPropertyValue(name), priority: el.style.getPropertyPriority(name) };
+        el.style.setProperty(name, value, "important");
       });
-      el.style.setProperty("visibility", "hidden", "important");
+      hidden.set(el, saved);
     };
     Array.from(document.body.children).forEach(inspect);
   }
@@ -1063,9 +1067,11 @@
   function stopSweep() {
     clearInterval(sweepTimer);
     sweepTimer = null;
-    hidden.forEach((orig, el) => {
-      el.style.removeProperty("visibility");
-      if (orig.value) el.style.setProperty("visibility", orig.value, orig.priority);
+    hidden.forEach((saved, el) => {
+      HIDE_PROPS.forEach(([name]) => {
+        el.style.removeProperty(name);
+        if (saved[name].value) el.style.setProperty(name, saved[name].value, saved[name].priority);
+      });
     });
     hidden.clear();
   }

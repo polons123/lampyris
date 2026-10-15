@@ -1,5 +1,5 @@
 # Пакеты libmpv для Windows: сборки mpv-winbuild (zhongfly), GPL-вариант с FFmpeg.
 # Формат: <архитектура> <тег релиза> <файл> <SHA-256>. Менять только осознанно: сборка не пройдёт при несовпадении.
 # Старые теги upstream периодически удаляет; тогда обновите тег и суммы (scripts\fetch-libs.ps1 -Arch x64 -Update).
-x64 2026-10-14-270367e8af mpv-dev-x86_64-20261014-git-270367e8af.7z 966e1cd5e85b7bd92595300ec414765cbca2bfd95f0e84467e5ae63674b49792
-arm64 2026-10-14-270367e8af mpv-dev-aarch64-20261014-git-270367e8af.7z 51518faa8fdab97cc5ce5d340c425793c42817164e260d72f95e9367bd1250a0
+x64 2026-10-14-7c4f662c08 mpv-dev-x86_64-20261014-git-7c4f662c08.7z c88b6c9cc368495dc4f8d66fec3b10f720d8a2bd6d7aa5d857bdda218393d174
+arm64 2026-10-14-7c4f662c08 mpv-dev-aarch64-20261014-git-7c4f662c08.7z 7f313761d0c05c6dcd2939dd3cce2d2669cf5d6994dc6eb0d300637260f702aa
