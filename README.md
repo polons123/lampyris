@@ -72,5 +72,8 @@ swift test              # разбор mpv.conf и сокращение адре
 
 Чтобы выпустить версию, поднимите номер в `scripts/VERSION`, закоммитьте и поставьте тег вида `v0.1.0`: CI соберёт обе сборки и опубликует релиз с `.dmg`, `.zip` и установщиками `-setup.exe` (Windows) , `SHA256SUMS.txt` и его подпись `SHA256SUMS.txt.sig` (ключ — секрет репозитория `UPDATE_SIGNING_KEY`; по ней приложения проверяют обновления). Для работы с файлами workflow через `gh` у токена должно быть право `workflow` (`gh auth refresh -h github.com -s workflow`).
 
+## Благодарности
+Спасибо [@XEGARE](https://github.com/XEGARE) за тестирование версии для Windows и подробные отчёты об ошибках.
+
 ## Лицензия
 GNU GPL версии 3 или более поздней (GPL-3.0-or-later), см. [LICENSE](LICENSE). Сведения о сторонних компонентах и сервисах — в [THIRD-PARTY.md](THIRD-PARTY.md).
