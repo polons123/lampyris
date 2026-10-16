@@ -1012,6 +1012,19 @@
     });
   }
 
+  // Постоянная боковая панель: у значка есть правый отступ под подпись, из-за него кружок фокуса сдвигался влево от значка.
+  // Стиль нужен всегда, а не только во время воспроизведения, поэтому добавляется при регистрации.
+  function addMenuStyle() {
+    if (document.getElementById("mpv-menu-style")) return;
+    const style = document.createElement("style");
+    style.id = "mpv-menu-style";
+    style.textContent =
+      `body.menu--always:not(.menu--open):not(.light--version) .menu__list { padding-left: 0; }`+
+      `body.menu--always:not(.menu--open):not(.light--version) .menu__item { justify-content: center; width: fit-content; padding-left: .6em; padding-right: .6em; margin-left: auto; margin-right: auto; }`+
+      `body.menu--always:not(.menu--open):not(.light--version) .menu__item .menu__ico { margin-right: 0; }`;
+    document.head.appendChild(style);
+  }
+
   function addStyle() {
     if (document.getElementById("mpv-builtin-style")) return;
     const style = document.createElement("style");
@@ -1021,6 +1034,7 @@
       `html.${CLASS}, html.${CLASS} body, html.${CLASS} .player,
        html.${CLASS} .player-video, html.${CLASS} .player-video__display { background: transparent !important; }
        html.${CLASS} #app { visibility: hidden !important; }
+       html.${CLASS} .wrap__left, html.${CLASS} .menu { visibility: hidden !important; opacity: 0 !important; pointer-events: none !important; }
        html.${CLASS} .player-info__values { display: none !important; }
        html.${CLASS} .mpv-epline { font-size: 1.5em; margin-top: 0.25em; opacity: 0.85; text-shadow: 0 0 0.2em rgba(0, 0, 0, 0.5); }
        html.${CLASS} .player-video__overlay { display: none !important; background: none !important; }`;
@@ -1949,6 +1963,7 @@
     window.__mpvRemote = (cmd) => { if (active && active.__remote) active.__remote(cmd); };
     // Для обложки открытия: пойдёт ли это видео через mpv (настройка включена).
     window.desktopMpvActive = () => mpvEnabled(L);
+    addMenuStyle();
     addSettings(L);
     hideExternalMpv(L);
     installProfileHotkey(L);

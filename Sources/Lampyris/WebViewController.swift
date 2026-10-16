@@ -159,6 +159,10 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
 
     @objc func reload() { loadServer() }
 
+    func setLampaLanguage(_ code: String, then done: @escaping () -> Void) {
+        webView.evaluateJavaScript("try{localStorage.setItem('language','\(code)')}catch(e){}") { _, _ in done() }
+    }
+
     /// Диалог смены адреса сервера; при подтверждении страница загружается заново.
     func changeServer() {
         if let new = ServerURL.change(current: url) { url = new; loadServer() }

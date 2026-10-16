@@ -274,7 +274,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard new != Language.current else { return }
         Language.set(new)
         buildMenu()
-        webController?.reload()
+        // Язык самой Lampa берётся из localStorage: записываем его и только потом перезагружаем страницу.
+        webController?.setLampaLanguage(new == .ru ? "ru" : "en") { [weak self] in self?.webController?.reload() }
     }
 
     @objc func showMpvConfFolder() {

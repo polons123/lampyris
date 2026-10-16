@@ -770,8 +770,10 @@ fn main() {
                         for (m, ru, en) in &menu_subs { m.set_text(tr(ru, en)); }
                         lang_ru_item.set_checked(i18n::is_ru());
                         lang_en_item.set_checked(!i18n::is_ru());
-                        // Язык страницы ошибки и подсказок плеера применяется при загрузке страницы.
-                        let _ = proxy.send_event(UserEvent::Load);
+                        // Язык самой Lampa берётся из localStorage; записываем его и только потом перезагружаем страницу.
+                        let p = proxy.clone();
+                        let js = format!("try{{localStorage.setItem('language','{}')}}catch(e){{}}", if i18n::is_ru() { "ru" } else { "en" });
+                        let _ = webview.evaluate_script_with_callback(&js, move |_| { let _ = p.send_event(UserEvent::Load); });
                     }
                     _ => {}
                 },
