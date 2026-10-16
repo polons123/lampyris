@@ -604,8 +604,8 @@
 
   // Панель «Картинка» (клавиша C): ползунки gamma, brightness, contrast и saturation для ручной подстройки,
   // например тёмного видео, и «Автокоррекция SDR» (свои gamma и saturation, только для SDR-видео, не HDR).
-  // Порядок: профиль, затем автокоррекция (если видео SDR), затем ручные значения. Значения запоминаются
-  // и ставятся при открытии каждого видео.
+  // Ручные ползунки — поправки поверх профиля и автокоррекции (итог = профиль + автокоррекция SDR + поправка, от -100 до 100),
+  // поэтому автокоррекция всегда видна. Значения запоминаются и ставятся при открытии каждого видео.
   const PICTURE_SETTING = "mpv_picture";
   const AUTOSDR_SETTING = "mpv_autosdr";
   const PICTURE_PROPS = [
@@ -643,24 +643,33 @@
 
   const isSdr = (params) => Boolean(params && params.gamma && params.gamma !== "pq" && params.gamma !== "hlg");
 
-  // Ставит картинку по порядку: нули и значения профиля, автокоррекция (для SDR), ручные значения.
+  // Ставит картинку: значения профиля, плюс автокоррекция (для SDR), плюс ручные поправки.
   // Вызывается при открытии видео, смене параметров видео и профиля, изменении панели.
+  // pictureBase — профиль + автокоррекция без ручных поправок: от него ползунки считают итог.
   let pictureRun = 0;
   let pictureDirty = false;
+  let pictureBase = null;
   async function applyPicture(L) {
     const run = ++pictureRun;
     const manual = readPicture(L);
     const auto = readAutoSdr(L);
-    if (!auto.on && !Object.keys(manual).length && !pictureDirty) return;
+    if (!auto.on && !Object.keys(manual).length && !pictureDirty) { pictureBase = null; return; }
     for (const p of PICTURE_PROPS) await api.set(p.name, 0).catch(() => {});
     await api.profile(currentProfile(L)).catch(() => {});
     if (run !== pictureRun) return;
+    const profileValues = {};
+    for (const p of PICTURE_PROPS) profileValues[p.name] = clampPicture(await api.get(p.name).catch(() => 0));
+    const base = Object.assign({}, profileValues);
     if (auto.on && isSdr(await api.get("video-params").catch(() => null))) {
-      if (auto.gamma) await api.set("gamma", auto.gamma).catch(() => {});
-      if (auto.saturation) await api.set("saturation", auto.saturation).catch(() => {});
+      base.gamma = clampPicture(base.gamma + auto.gamma);
+      base.saturation = clampPicture(base.saturation + auto.saturation);
     }
     if (run !== pictureRun) return;
-    for (const name of Object.keys(manual)) await api.set(name, manual[name]).catch(() => {});
+    pictureBase = base;
+    for (const p of PICTURE_PROPS) {
+      const target = clampPicture(base[p.name] + (manual[p.name] || 0));
+      if (target !== profileValues[p.name]) await api.set(p.name, target).catch(() => {});
+    }
     pictureDirty = auto.on || Object.keys(manual).length > 0;
   }
 
@@ -670,18 +679,20 @@
     const ru = ruLang(L);
     const touched = readPicture(L);
     const auto = readAutoSdr(L);
+    // Ручные ползунки показывают поправку (0 — без изменений), а не итоговое значение.
     const values = {};
-    const readActual = async (name) => clampPicture(await api.get(name).catch(() => 0));
-    for (const p of PICTURE_PROPS) values[p.name] = p.name in touched ? touched[p.name] : await readActual(p.name);
+    for (const p of PICTURE_PROPS) values[p.name] = touched[p.name] || 0;
+    if (!pictureBase) {
+      // Ничего ещё не настраивалось: свойства сейчас равны значениям профиля.
+      pictureBase = {};
+      for (const p of PICTURE_PROPS) pictureBase[p.name] = clampPicture(await api.get(p.name).catch(() => 0));
+    }
     if (document.querySelector(".mpv-pick")) return;
 
     let refreshTimer = null;
     const scheduleApply = () => {
       clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(async () => {
-        await applyPicture(L);
-        for (const p of PICTURE_PROPS) if (!(p.name in touched)) { values[p.name] = await readActual(p.name); paintAll(); }
-      }, 150);
+      refreshTimer = setTimeout(() => { applyPicture(L); }, 150);
     };
     const saveManual = () => L.Storage.set(PICTURE_SETTING, JSON.stringify(touched));
     const saveAuto = () => L.Storage.set(AUTOSDR_SETTING, JSON.stringify(auto));
@@ -696,7 +707,7 @@
         if (values[p.name] === v && p.name in touched) return;
         values[p.name] = v;
         touched[p.name] = v;
-        api.set(p.name, v).catch(() => {});
+        api.set(p.name, clampPicture(((pictureBase && pictureBase[p.name]) || 0) + v)).catch(() => {});
         saveManual();
       },
     }));
@@ -716,8 +727,8 @@
     overlay.innerHTML = '<div class="mpv-pick__box"><div class="mpv-pick__title"></div><div class="mpv-pick__list"></div><div class="mpv-pick__hint"></div></div>';
     overlay.querySelector(".mpv-pick__title").textContent = ru ? "Картинка" : "Picture";
     overlay.querySelector(".mpv-pick__hint").textContent = ru
-      ? "↑ ↓ выбор · ← → изменить (Shift — точнее) · 0 — в ноль · R — сброс · Esc"
-      : "↑ ↓ select · ← → change (Shift — finer) · 0 — zero · R — reset · Esc";
+      ? "↑ ↓ выбор · ← → изменить (Shift — точнее) · 0 — в ноль · R — сброс · Esc. Ручные ползунки — поправка поверх профиля и автокоррекции"
+      : "↑ ↓ select · ← → change (Shift — finer) · 0 — zero · R — reset · Esc. Manual sliders adjust on top of the profile and auto-correction";
     const list = overlay.querySelector(".mpv-pick__list");
 
     let index = 0;
@@ -799,8 +810,8 @@
       Object.assign(auto, AUTOSDR_DEFAULTS);
       L.Storage.set(PICTURE_SETTING, "");
       L.Storage.set(AUTOSDR_SETTING, "");
+      for (const p of PICTURE_PROPS) values[p.name] = 0;
       await applyPicture(L);
-      for (const p of PICTURE_PROPS) values[p.name] = await readActual(p.name);
       paintAll();
       showToast(ru ? "Картинка сброшена" : "Picture reset");
     }
