@@ -117,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             #
             # Яркость, контраст, гамму и насыщенность (например, для тёмного видео) настраивают во время просмотра
             # клавишей C: ползунки применяются сразу, запоминаются и не зависят от выбранного профиля.
+            # Там же «Автокоррекция SDR»: свои гамма и насыщенность, только для SDR-видео (HDR не трогает).
             #
             # На macOS hdr-compute-peak не действует (рендерер gpu, OpenGL 4.1 без compute-шейдеров); на Windows работает.
             """, """
@@ -145,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             #
             # Brightness, contrast, gamma and saturation (for example, for a dark video) are tuned during playback
             # with the C key: the sliders apply immediately, are remembered and do not depend on the chosen profile.
+            # It also has “SDR auto-correction”: its own gamma and saturation, only for SDR video (HDR is untouched).
             #
             # On macOS hdr-compute-peak has no effect (gpu renderer, OpenGL 4.1 has no compute shaders); on Windows it works.
             """)

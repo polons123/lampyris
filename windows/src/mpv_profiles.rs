@@ -84,6 +84,7 @@ pub const DOC_RU: &str = r#"# ── Встроенные профили (выб
 #
 # Яркость, контраст, гамму и насыщенность (например, для тёмного видео) настраивают во время просмотра
 # клавишей C: ползунки применяются сразу, запоминаются и не зависят от выбранного профиля.
+# Там же «Автокоррекция SDR»: свои гамма и насыщенность, только для SDR-видео (HDR не трогает).
 #
 # hdr-compute-peak считает пик яркости по кадрам (D3D11 поддерживает compute-шейдеры).
 "#;
@@ -104,6 +105,7 @@ pub const DOC_EN: &str = r#"# ── Built-in profiles (chosen in Settings → M
 #
 # Brightness, contrast, gamma and saturation (for example, for a dark video) are tuned during playback
 # with the C key: the sliders apply immediately, are remembered and do not depend on the chosen profile.
+# It also has “SDR auto-correction”: its own gamma and saturation, only for SDR video (HDR is untouched).
 #
 # hdr-compute-peak measures the brightness peak per frame (D3D11 supports compute shaders).
 "#;

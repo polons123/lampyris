@@ -322,7 +322,7 @@
       .mpv-help .mpv-pick__title { font-size:1.3em; }
       .mpv-pic { background:none; align-items:flex-end; padding-bottom:3em; pointer-events:none; }
       .mpv-pic .mpv-pick__box { pointer-events:auto; min-width:min(34em,90%); background:rgba(30,30,36,.62); }
-      .mpv-pic__row { display:grid; grid-template-columns:8em 1fr 3em; align-items:center; gap:1em; padding:.5em 1em;
+      .mpv-pic__row { display:grid; grid-template-columns:11em 1fr 3.4em; align-items:center; gap:1em; padding:.5em 1em;
         border-radius:999px; font-weight:600; cursor:pointer; }
       .mpv-pic__row.focus { background:rgba(255,255,255,.16); }
       .mpv-pic__track { position:relative; height:.5em; border-radius:999px; background:rgba(255,255,255,.25); touch-action:none; }
@@ -597,28 +597,62 @@
 
 
   // Панель «Картинка» (клавиша C): ползунки gamma, brightness, contrast и saturation для ручной подстройки,
-  // например тёмного видео. Значения применяются сразу, запоминаются и ставятся при каждом открытии видео.
+  // например тёмного видео, и «Автокоррекция SDR» (свои gamma и saturation, только для SDR-видео, не HDR).
+  // Порядок: профиль, затем автокоррекция (если видео SDR), затем ручные значения. Значения запоминаются
+  // и ставятся при открытии каждого видео.
   const PICTURE_SETTING = "mpv_picture";
+  const AUTOSDR_SETTING = "mpv_autosdr";
   const PICTURE_PROPS = [
     { name: "gamma", ru: "Гамма", en: "Gamma" },
     { name: "brightness", ru: "Яркость", en: "Brightness" },
     { name: "contrast", ru: "Контраст", en: "Contrast" },
     { name: "saturation", ru: "Насыщенность", en: "Saturation" },
   ];
+  const AUTOSDR_DEFAULTS = { on: false, gamma: 8, saturation: 4 };
   const clampPicture = (v) => Math.max(-100, Math.min(100, Math.round(Number(v)) || 0));
 
-  // Сохранённые значения: только то, что пользователь менял (в том числе явный 0).
+  function readJson(L, key) {
+    try { return JSON.parse(String(L.Storage.get(key, "") || "{}")) || {}; } catch (e) { return {}; }
+  }
+
+  // Сохранённые ручные значения: только то, что пользователь менял (в том числе явный 0).
   function readPicture(L) {
-    let raw = {};
-    try { raw = JSON.parse(String(L.Storage.get(PICTURE_SETTING, "") || "{}")) || {}; } catch (e) { raw = {}; }
+    const raw = readJson(L, PICTURE_SETTING);
     const out = {};
-    PICTURE_PROPS.forEach((p) => { if (Number.isFinite(Number(raw[p.name])) && raw[p.name] !== null) out[p.name] = clampPicture(raw[p.name]); });
+    PICTURE_PROPS.forEach((p) => { if (raw[p.name] !== null && Number.isFinite(Number(raw[p.name]))) out[p.name] = clampPicture(raw[p.name]); });
     return out;
   }
 
-  function applyPicture(L) {
-    const values = readPicture(L);
-    Object.keys(values).forEach((name) => { api.set(name, values[name]).catch(() => {}); });
+  function readAutoSdr(L) {
+    const raw = readJson(L, AUTOSDR_SETTING);
+    return {
+      on: raw.on === true,
+      gamma: raw.gamma === undefined ? AUTOSDR_DEFAULTS.gamma : clampPicture(raw.gamma),
+      saturation: raw.saturation === undefined ? AUTOSDR_DEFAULTS.saturation : clampPicture(raw.saturation),
+    };
+  }
+
+  const isSdr = (params) => Boolean(params && params.gamma && params.gamma !== "pq" && params.gamma !== "hlg");
+
+  // Ставит картинку по порядку: нули и значения профиля, автокоррекция (для SDR), ручные значения.
+  // Вызывается при открытии видео, смене параметров видео и профиля, изменении панели.
+  let pictureRun = 0;
+  let pictureDirty = false;
+  async function applyPicture(L) {
+    const run = ++pictureRun;
+    const manual = readPicture(L);
+    const auto = readAutoSdr(L);
+    if (!auto.on && !Object.keys(manual).length && !pictureDirty) return;
+    for (const p of PICTURE_PROPS) await api.set(p.name, 0).catch(() => {});
+    await api.profile(currentProfile(L)).catch(() => {});
+    if (run !== pictureRun) return;
+    if (auto.on && isSdr(await api.get("video-params").catch(() => null))) {
+      if (auto.gamma) await api.set("gamma", auto.gamma).catch(() => {});
+      if (auto.saturation) await api.set("saturation", auto.saturation).catch(() => {});
+    }
+    if (run !== pictureRun) return;
+    for (const name of Object.keys(manual)) await api.set(name, manual[name]).catch(() => {});
+    pictureDirty = auto.on || Object.keys(manual).length > 0;
   }
 
   async function openPicture(L) {
@@ -626,11 +660,48 @@
     addUiStyle();
     const ru = ruLang(L);
     const touched = readPicture(L);
+    const auto = readAutoSdr(L);
     const values = {};
-    for (const p of PICTURE_PROPS) {
-      values[p.name] = p.name in touched ? touched[p.name] : clampPicture(await api.get(p.name).catch(() => 0));
-    }
+    const readActual = async (name) => clampPicture(await api.get(name).catch(() => 0));
+    for (const p of PICTURE_PROPS) values[p.name] = p.name in touched ? touched[p.name] : await readActual(p.name);
     if (document.querySelector(".mpv-pick")) return;
+
+    let refreshTimer = null;
+    const scheduleApply = () => {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(async () => {
+        await applyPicture(L);
+        for (const p of PICTURE_PROPS) if (!(p.name in touched)) { values[p.name] = await readActual(p.name); paintAll(); }
+      }, 150);
+    };
+    const saveManual = () => L.Storage.set(PICTURE_SETTING, JSON.stringify(touched));
+    const saveAuto = () => L.Storage.set(AUTOSDR_SETTING, JSON.stringify(auto));
+
+    // Строки панели: ползунки (value, set), переключатель автокоррекции и сброс.
+    const defs = PICTURE_PROPS.map((p) => ({
+      kind: "slider",
+      label: ru ? p.ru : p.en,
+      value: () => values[p.name],
+      set: (v) => {
+        v = clampPicture(v);
+        if (values[p.name] === v && p.name in touched) return;
+        values[p.name] = v;
+        touched[p.name] = v;
+        api.set(p.name, v).catch(() => {});
+        saveManual();
+      },
+    }));
+    defs.push({
+      kind: "toggle",
+      label: ru ? "Автокоррекция SDR" : "SDR auto-correction",
+      text: () => (auto.on ? (ru ? "вкл" : "on") : (ru ? "выкл" : "off")),
+      toggle: () => { auto.on = !auto.on; saveAuto(); scheduleApply(); },
+    });
+    [["gamma", ru ? "· Гамма (SDR)" : "· Gamma (SDR)"], ["saturation", ru ? "· Насыщенность (SDR)" : "· Saturation (SDR)"]].forEach(([name, label]) => {
+      defs.push({ kind: "slider", label, value: () => auto[name], set: (v) => { auto[name] = clampPicture(v); saveAuto(); if (auto.on) scheduleApply(); } });
+    });
+    defs.push({ kind: "reset", label: ru ? "Сбросить всё" : "Reset all" });
+
     const overlay = document.createElement("div");
     overlay.className = "mpv-pick mpv-pic";
     overlay.innerHTML = '<div class="mpv-pick__box"><div class="mpv-pick__title"></div><div class="mpv-pick__list"></div><div class="mpv-pick__hint"></div></div>';
@@ -639,85 +710,94 @@
       ? "↑ ↓ выбор · ← → изменить (Shift — точнее) · 0 — в ноль · R — сброс · Esc"
       : "↑ ↓ select · ← → change (Shift — finer) · 0 — zero · R — reset · Esc";
     const list = overlay.querySelector(".mpv-pick__list");
-    const ui = {};
-    const rows = PICTURE_PROPS.map((p, i) => {
+
+    let index = 0;
+    const rows = defs.map((def, i) => {
+      if (def.kind === "reset") {
+        const row = document.createElement("div");
+        row.className = "mpv-pick__item";
+        row.textContent = def.label;
+        row.addEventListener("click", () => { focus(i); resetAll(); });
+        list.appendChild(row);
+        def.row = row;
+        return row;
+      }
       const row = document.createElement("div");
       row.className = "mpv-pic__row";
       const label = document.createElement("span");
-      label.textContent = ru ? p.ru : p.en;
-      const track = document.createElement("div");
-      track.className = "mpv-pic__track";
-      const fill = document.createElement("div");
-      fill.className = "mpv-pic__fill";
-      const zero = document.createElement("div");
-      zero.className = "mpv-pic__zero";
-      const knob = document.createElement("div");
-      knob.className = "mpv-pic__knob";
+      label.textContent = def.label;
       const val = document.createElement("span");
       val.className = "mpv-pic__val";
       // Lampa подменяет Element.prototype.append версией с одним аргументом, поэтому только appendChild.
-      [fill, zero, knob].forEach((n) => track.appendChild(n));
-      [label, track, val].forEach((n) => row.appendChild(n));
-      list.appendChild(row);
-      ui[p.name] = { fill, knob, val };
-      const fromPointer = (e) => {
-        const r = track.getBoundingClientRect();
-        setValue(p.name, ((e.clientX - r.left) / r.width) * 200 - 100);
-      };
-      track.addEventListener("pointerdown", (e) => {
-        focus(i);
-        track.setPointerCapture(e.pointerId);
-        fromPointer(e);
-        track.onpointermove = fromPointer;
-      });
-      const release = () => { track.onpointermove = null; };
-      track.addEventListener("pointerup", release);
-      track.addEventListener("pointercancel", release);
+      row.appendChild(label);
+      def.val = val;
+      if (def.kind === "slider") {
+        const track = document.createElement("div");
+        track.className = "mpv-pic__track";
+        const fill = document.createElement("div");
+        fill.className = "mpv-pic__fill";
+        const zero = document.createElement("div");
+        zero.className = "mpv-pic__zero";
+        const knob = document.createElement("div");
+        knob.className = "mpv-pic__knob";
+        [fill, zero, knob].forEach((n) => track.appendChild(n));
+        row.appendChild(track);
+        def.fill = fill;
+        def.knob = knob;
+        const fromPointer = (e) => {
+          const r = track.getBoundingClientRect();
+          def.set(((e.clientX - r.left) / r.width) * 200 - 100);
+          paint(def);
+        };
+        track.addEventListener("pointerdown", (e) => {
+          focus(i);
+          track.setPointerCapture(e.pointerId);
+          fromPointer(e);
+          track.onpointermove = fromPointer;
+        });
+        const release = () => { track.onpointermove = null; };
+        track.addEventListener("pointerup", release);
+        track.addEventListener("pointercancel", release);
+      } else {
+        row.appendChild(document.createElement("span"));
+        row.addEventListener("click", () => { focus(i); def.toggle(); paint(def); });
+      }
+      row.appendChild(val);
       row.addEventListener("click", () => focus(i));
+      list.appendChild(row);
+      def.row = row;
       return row;
     });
-    const resetRow = document.createElement("div");
-    resetRow.className = "mpv-pick__item";
-    resetRow.textContent = ru ? "Сбросить всё" : "Reset all";
-    resetRow.addEventListener("click", () => { focus(PICTURE_PROPS.length); resetAll(); });
-    list.appendChild(resetRow);
-    rows.push(resetRow);
 
-    let index = 0;
     function focus(i) {
       index = (i + rows.length) % rows.length;
       rows.forEach((r, k) => r.classList.toggle("focus", k === index));
     }
-    function paint(name) {
-      const v = values[name];
+    function paint(def) {
+      if (def.kind === "toggle") { def.val.textContent = def.text(); return; }
+      if (def.kind !== "slider") return;
+      const v = def.value();
       const pct = (v + 100) / 2;
-      const u = ui[name];
-      u.fill.style.left = Math.min(50, pct) + "%";
-      u.fill.style.width = Math.abs(pct - 50) + "%";
-      u.knob.style.left = pct + "%";
-      u.val.textContent = (v > 0 ? "+" : "") + v;
+      def.fill.style.left = Math.min(50, pct) + "%";
+      def.fill.style.width = Math.abs(pct - 50) + "%";
+      def.knob.style.left = pct + "%";
+      def.val.textContent = (v > 0 ? "+" : "") + v;
     }
-    function setValue(name, v) {
-      v = clampPicture(v);
-      if (values[name] === v && name in touched) return;
-      values[name] = v;
-      touched[name] = v;
-      paint(name);
-      api.set(name, v).catch(() => {});
-      L.Storage.set(PICTURE_SETTING, JSON.stringify(touched));
-    }
+    function paintAll() { defs.forEach(paint); }
+
     async function resetAll() {
       Object.keys(touched).forEach((k) => delete touched[k]);
+      Object.assign(auto, AUTOSDR_DEFAULTS);
       L.Storage.set(PICTURE_SETTING, "");
-      for (const p of PICTURE_PROPS) await api.set(p.name, 0).catch(() => {});
-      // Профиль возвращает свои значения (если он их задаёт), затем читаем, что получилось.
-      await api.profile(currentProfile(L)).catch(() => {});
-      for (const p of PICTURE_PROPS) { values[p.name] = clampPicture(await api.get(p.name).catch(() => 0)); paint(p.name); }
+      L.Storage.set(AUTOSDR_SETTING, "");
+      await applyPicture(L);
+      for (const p of PICTURE_PROPS) values[p.name] = await readActual(p.name);
+      paintAll();
       showToast(ru ? "Картинка сброшена" : "Picture reset");
     }
-    PICTURE_PROPS.forEach((p) => paint(p.name));
 
     const close = () => {
+      clearTimeout(refreshTimer);
       window.removeEventListener("keydown", onKey, true);
       overlay.remove();
       // keyup закрывающей клавиши не должен дойти до Lampa (Enter поставил бы паузу).
@@ -730,22 +810,25 @@
     function onKey(e) {
       e.preventDefault();
       e.stopImmediatePropagation();
-      const prop = PICTURE_PROPS[index];
+      const def = defs[index];
+      const dir = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
       if (e.key === "ArrowUp") focus(index - 1);
       else if (e.key === "ArrowDown") focus(index + 1);
-      else if (prop && (e.key === "ArrowLeft" || e.key === "ArrowRight")) setValue(prop.name, values[prop.name] + (e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 1 : 5));
+      else if (dir && def.kind === "slider") { def.set(def.value() + dir * (e.shiftKey ? 1 : 5)); paint(def); }
+      else if (dir && def.kind === "toggle") { def.toggle(); paint(def); }
       else if (e.repeat) return;
-      else if (prop && e.key === "0") setValue(prop.name, 0);
-      else if (e.code === "KeyR" || (!prop && e.key === "Enter")) resetAll();
-      else if (e.key === "Escape" || e.key === "Backspace" || e.key === "BrowserBack" || e.code === "KeyC" || (prop && e.key === "Enter")) close();
+      else if (e.key === "0" && def.kind === "slider") { def.set(0); paint(def); }
+      else if (e.code === "KeyR" || (e.key === "Enter" && def.kind === "reset")) resetAll();
+      else if (e.key === "Enter" && def.kind === "toggle") { def.toggle(); paint(def); }
+      else if (e.key === "Escape" || e.key === "Backspace" || e.key === "BrowserBack" || e.code === "KeyC" || e.key === "Enter") close();
     }
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("keyup", swallow, true);
     window.addEventListener("keypress", swallow, true);
     document.body.appendChild(overlay);
+    paintAll();
     focus(0);
   }
-
 
   // Клавиши плеера (пока играет mpv): [ ] — скорость на 0.25 (\ — сброс), , . — задержка звука на 0.1 с,
   // Z X — задержка субтитров, S — скриншот, I — окно статистики, C — панель «Картинка». Работают при видео и при панели плеера.
@@ -880,7 +963,7 @@
       [["S"], "Скриншот", "Сохраняет текущий кадр в папку «Изображения/Lampyris» (PNG, в размере картинки на экране)."],
       [["I"], "Статистика", "Окно с кодеками, декодером, пропущенными кадрами, сетью, буфером и данными торрента. Повторное нажатие закрывает."],
       [["P"], "Профиль mpv", "Выбор набора опций из mpv.conf. Применяется сразу и запоминается."],
-      [["C"], "Картинка", "Ползунки гаммы, яркости, контраста и насыщенности для ручной подстройки (например, тёмного видео). Значения запоминаются и ставятся при каждом открытии видео; «Сбросить всё» возвращает профиль."],
+      [["C"], "Картинка", "Ползунки гаммы, яркости, контраста и насыщенности для ручной подстройки (например, тёмного видео) и «Автокоррекция SDR» (свои гамма и насыщенность, только для SDR-видео, не HDR). Значения запоминаются и ставятся при каждом открытии видео; «Сбросить всё» возвращает профиль."],
       [["U"], "Субтитры из интернета", "Поиск русских или английских субтитров (OpenSubtitles), выбор варианта и включение. Есть и кнопка на панели плеера."],
       [["N"], "Пропустить", "Пропускает заставку, пересказ, титры или анонс, пока внизу справа показана кнопка «Пропустить…» (таймкоды TheIntroDB)."],
       [["H"], "Справка", "Это окно. Закрыть: Esc, Enter или H."],
@@ -895,7 +978,7 @@
       [["S"], "Screenshot", "Saves the current frame to Pictures/Lampyris (PNG, at the on-screen picture size)."],
       [["I"], "Statistics", "Window with codecs, decoder, dropped frames, network, buffer and torrent data. Press again to close."],
       [["P"], "mpv profile", "Pick a set of options from mpv.conf. Applies immediately and is remembered."],
-      [["C"], "Picture", "Sliders for gamma, brightness, contrast and saturation for manual tuning (for example, a dark video). Values are remembered and set whenever a video opens; “Reset all” brings back the profile."],
+      [["C"], "Picture", "Sliders for gamma, brightness, contrast and saturation for manual tuning (for example, a dark video), and “SDR auto-correction” (its own gamma and saturation, only for SDR video, not HDR). Values are remembered and set whenever a video opens; “Reset all” brings back the profile."],
       [["U"], "Online subtitles", "Search Russian or English subtitles (OpenSubtitles), pick a variant and turn it on. A panel button does the same."],
       [["N"], "Skip", "Skips the intro, recap, credits or preview while the “Skip…” button is shown at the bottom right (TheIntroDB timestamps)."],
       [["H"], "Help", "This window. Close: Esc, Enter or H."],
@@ -2020,7 +2103,7 @@
         volume: Math.round(state.volume * 100),
         profile: window.Lampa && window.Lampa.Storage ? String(window.Lampa.Storage.get(PROFILE_SETTING, "") || "") : "",
         mpvOptions: bufferOptions(),
-      }).then((r) => { if (!(r && r.ok)) fail("open failed"); else applyPicture(L); }, (e) => fail(String(e)));
+      }).then((r) => { if (!(r && r.ok)) fail("open failed"); }, (e) => fail(String(e)));
     }
 
     el.load = () => {
@@ -2098,6 +2181,9 @@
         } else if (name === "video-params" && data) {
           state.width = data.w || 0;
           state.height = data.h || 0;
+          // Картинка зависит от того, SDR видео или HDR: ставим заново, когда параметры сменились.
+          const paramsKey = `${data.w}x${data.h}:${data.gamma}`;
+          if (paramsKey !== state.picturedFor && window.Lampa) { state.picturedFor = paramsKey; applyPicture(window.Lampa); }
         } else if (name === "demuxer-cache-time" && state.duration > 0) {
           emit("progress", { percent: Math.round(Math.min(100, (Number(data) / state.duration) * 100)) });
         } else if (name === "aid" || name === "sid") {
@@ -2111,6 +2197,9 @@
           emit("ended");
         }
       } else if (ev.event === "file-loaded") {
+        state.picturedFor = null;
+        // Запасной вызов: если параметры нового видео совпали с прежними, событие video-params не придёт.
+        setTimeout(() => { if (window.Lampa) applyPicture(window.Lampa); }, 300);
         state.loaded = true;
         state.everLoaded = true;
         api.set("mute", state.muted);
