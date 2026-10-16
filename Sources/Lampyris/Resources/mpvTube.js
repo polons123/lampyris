@@ -321,8 +321,8 @@
       .mpv-help__text div { opacity:.65; font-size:.85em; margin-top:.1em; }
       .mpv-help .mpv-pick__title { font-size:1.3em; }
       .mpv-pic { background:none; align-items:flex-end; padding-bottom:3em; pointer-events:none; }
-      .mpv-pic .mpv-pick__box { pointer-events:auto; min-width:min(34em,90%); background:rgba(30,30,36,.62); }
-      .mpv-pic__row { display:grid; grid-template-columns:12.5em 1fr 3.4em; align-items:center; gap:1em; padding:.5em 1em;
+      .mpv-pic .mpv-pick__box { pointer-events:auto; box-sizing:border-box; width:min(23em,90%); min-width:0; padding:1.2em 1.2em; background:rgba(30,30,36,.62); }
+      .mpv-pic__row { display:grid; grid-template-columns:8.8em 1fr 2.9em; align-items:center; gap:.7em; padding:.4em .8em; font-size:.9em;
         border-radius:999px; font-weight:600; cursor:pointer; }
       .mpv-pic__row.focus { background:rgba(255,255,255,.16); }
       .mpv-pic__track { position:relative; height:.5em; border-radius:999px; background:rgba(255,255,255,.25); touch-action:none; }
@@ -337,7 +337,7 @@
       .mpv-pic__dot { position:absolute; top:.15em; left:.15em; width:1.2em; height:1.2em; border-radius:50%; background:#fff;
         box-shadow:0 0 4px rgba(0,0,0,.5); transition:left .15s, background-color .15s; }
       .mpv-pic__switch.on .mpv-pic__dot { left:1.65em; background:#000; }
-      .mpv-pic .mpv-pick__item { justify-content:center; }`;
+      .mpv-pic .mpv-pick__hint { font-size:.75em; }`;
     document.head.appendChild(style);
   }
 
@@ -673,6 +673,9 @@
     pictureDirty = auto.on || Object.keys(manual).length > 0;
   }
 
+  // Закрывает открытую панель «Картинка» (при остановке видео): окно не должно оставаться на экране.
+  let pictureCloser = null;
+
   async function openPicture(L) {
     if (document.querySelector(".mpv-pick")) return;
     addUiStyle();
@@ -817,6 +820,7 @@
     }
 
     const close = () => {
+      pictureCloser = null;
       clearTimeout(refreshTimer);
       window.removeEventListener("keydown", onKey, true);
       overlay.remove();
@@ -845,6 +849,7 @@
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("keyup", swallow, true);
     window.addEventListener("keypress", swallow, true);
+    pictureCloser = close;
     document.body.appendChild(overlay);
     paintAll();
     focus(0);
@@ -2159,6 +2164,7 @@
       stopProfileButton();
       stopSeekButtons();
       closeStatsPanel();
+      if (pictureCloser) pictureCloser();
       api.stop();
       clearTimeout(state.pendingSubOff);
       clearTimeout(state.retryTimer);
