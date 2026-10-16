@@ -170,7 +170,7 @@ fn mpv_conf_template() -> String {
        "# mpv.conf of the Lampa player. Format: option=value, one per line.\n\
 # Options before the first [section] are common; [name] is a profile, chosen in Settings → MPV\n\
 # or with the P key during a video. The file is read each time a video is opened.\n#\n# hwdec=d3d11va\n#\n# [bright]\n# brightness=20\n");
-    format!("{head}#\n{}", tr(mpv_profiles::RU, mpv_profiles::EN))
+    format!("{head}#\n{}", tr(mpv_profiles::DOC_RU, mpv_profiles::DOC_EN))
 }
 
 fn open_mpv_conf(select_in_explorer: bool) {

@@ -70,7 +70,7 @@ pub fn write_text(text: &str) -> std::io::Result<()> {
 
 impl MpvConfig {
     pub fn load() -> MpvConfig {
-        parse(&read_text())
+        merged(&read_text())
     }
 
     /// Все записи применяемого набора: общие, затем выбранного профиля.
@@ -111,6 +111,20 @@ fn split_line(line: &str) -> Option<(String, Option<String>)> {
     }
     let value = rest.strip_prefix('=')?;
     Some((name.to_string(), Some(value.trim_start().to_string())))
+}
+
+/// Настройки пользователя вместе со встроенными профилями. Раздел пользователя с тем же именем целиком
+/// заменяет встроенный; не переопределённые встроенные идут первыми, затем профили из файла.
+pub fn merged(user_text: &str) -> MpvConfig {
+    let mut cfg = parse(user_text);
+    let builtin = parse(crate::mpv_profiles::BUILTIN);
+    let own: Vec<String> = builtin.profile_names.iter().filter(|n| !cfg.profiles.contains_key(*n)).cloned().collect();
+    for name in &own {
+        if let Some(entries) = builtin.profiles.get(name) { cfg.profiles.insert(name.clone(), entries.clone()); }
+    }
+    let user_names = std::mem::take(&mut cfg.profile_names);
+    cfg.profile_names = own.into_iter().chain(user_names).collect();
+    cfg
 }
 
 pub fn parse(text: &str) -> MpvConfig {
@@ -308,5 +322,33 @@ mod tests {
         // номера строк при CRLF считаются верно
         let cfg = parse("a=1\r\n=oops\r\n");
         assert_eq!(cfg.ignored[0].line, 2);
+    }
+
+    const BUILTIN_NAMES: [&str; 9] = ["balanced", "quality", "fast", "hdr-sdr", "smooth", "anime", "night", "dark", "dark-extreme"];
+
+    #[test]
+    fn builtin_profiles_are_valid() {
+        let cfg = parse(crate::mpv_profiles::BUILTIN);
+        assert_eq!(cfg.profile_names, BUILTIN_NAMES);
+        assert!(cfg.ignored.is_empty());
+        assert!(cfg.global.is_empty());
+    }
+
+    #[test]
+    fn merged_without_user_file() {
+        let cfg = merged("");
+        assert_eq!(cfg.profile_names, BUILTIN_NAMES);
+        assert!(cfg.entries(Some("dark")).contains(&e("gamma", "20", None)));
+    }
+
+    #[test]
+    fn user_profile_overrides_builtin() {
+        let cfg = merged("hwdec=no\n[dark]\ngamma=5\n[mine]\nvolume=30");
+        let mut expected: Vec<&str> = BUILTIN_NAMES.iter().copied().filter(|n| *n != "dark").collect();
+        expected.extend(["dark", "mine"]);
+        assert_eq!(cfg.profile_names, expected);
+        assert_eq!(cfg.profiles["dark"], vec![e("gamma", "5", None)]);
+        assert_eq!(names(&cfg.global), ["hwdec"]);
+        assert!(!cfg.profiles["balanced"].is_empty());
     }
 }

@@ -323,7 +323,7 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
             guard let text = args.first as? String else { return replyHandler(nil, "no text") }
             if text.utf8.count > MpvConfig.maxBytes { return replyHandler(["ok": false, "error": tr("файл больше 64 КиБ", "the file is larger than 64 KiB")], nil) }
             do { try MpvConfig.writeText(text) } catch { return replyHandler(["ok": false, "error": error.localizedDescription], nil) }
-            let cfg = MpvConfig.parse(text)
+            let cfg = MpvConfig.merged(userText: text)
             replyHandler(["ok": true, "profiles": cfg.profileNames,
                           "ignored": cfg.ignored.map { ["line": $0.line, "text": $0.text, "reason": $0.reason] }], nil)
         case "stop":

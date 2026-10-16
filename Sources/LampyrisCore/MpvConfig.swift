@@ -57,7 +57,18 @@ public struct MpvConfig {
         try (text.hasSuffix("\n") ? text : text + "\n").write(to: fileURL, atomically: true, encoding: .utf8)
     }
 
-    public static func load() -> MpvConfig { parse(readText()) }
+    public static func load() -> MpvConfig { merged(userText: readText()) }
+
+    /// Настройки пользователя вместе со встроенными профилями. Раздел пользователя с тем же именем целиком
+    /// заменяет встроенный; не переопределённые встроенные идут первыми, затем профили из файла.
+    public static func merged(userText: String) -> MpvConfig {
+        var cfg = parse(userText)
+        let builtin = parse(builtinProfiles)
+        let own = builtin.profileNames.filter { cfg.profiles[$0] == nil }
+        for name in own { cfg.profiles[name] = builtin.profiles[name] }
+        cfg.profileNames = own + cfg.profileNames
+        return cfg
+    }
 
     /// Все записи применяемого набора: общие, затем выбранного профиля.
     public func entries(profile: String?) -> [Entry] {

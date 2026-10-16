@@ -107,4 +107,30 @@ struct MpvConfigTests {
         #expect(cfg.global.map(\.name) == ["volume"])
         #expect(cfg.profiles["p"]?.first?.value == "5")
     }
+
+    private static let builtinNames = ["balanced", "quality", "fast", "hdr-sdr", "smooth", "anime", "night", "dark", "dark-extreme"]
+
+    @Test("встроенные профили разбираются без отброшенных строк и без общих опций")
+    func builtinProfilesAreValid() {
+        let cfg = MpvConfig.parse(MpvConfig.builtinProfiles)
+        #expect(cfg.profileNames == Self.builtinNames)
+        #expect(cfg.ignored.isEmpty)
+        #expect(cfg.global.isEmpty)
+    }
+
+    @Test("без файла пользователя доступны все встроенные профили")
+    func mergedWithoutUserFile() {
+        let cfg = MpvConfig.merged(userText: "")
+        #expect(cfg.profileNames == Self.builtinNames)
+        #expect(cfg.entries(profile: "dark").contains(.init(name: "gamma", value: "20", op: nil)))
+    }
+
+    @Test("профиль пользователя с тем же именем целиком заменяет встроенный, остальные идут первыми")
+    func userProfileOverridesBuiltin() {
+        let cfg = MpvConfig.merged(userText: "hwdec=no\n[dark]\ngamma=5\n[mine]\nvolume=30")
+        #expect(cfg.profileNames == Self.builtinNames.filter { $0 != "dark" } + ["dark", "mine"])
+        #expect(cfg.profiles["dark"] == [.init(name: "gamma", value: "5", op: nil)])
+        #expect(cfg.global.map(\.name) == ["hwdec"])
+        #expect(cfg.profiles["balanced"]?.isEmpty == false)
+    }
 }

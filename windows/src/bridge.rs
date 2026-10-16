@@ -230,7 +230,7 @@ impl Bridge {
                 if let Err(e) = config::write_text(text) {
                     return reply(Ok(json!({"ok": false, "error": e.to_string()})));
                 }
-                let cfg = config::parse(text);
+                let cfg = config::merged(text);
                 let ignored: Vec<Value> = cfg.ignored.iter().map(|i| json!({"line": i.line, "text": i.text, "reason": i.reason})).collect();
                 reply(Ok(json!({"ok": true, "profiles": cfg.profile_names, "ignored": ignored})));
             }
