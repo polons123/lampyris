@@ -452,6 +452,17 @@
 
   // Окно выбора профиля. Выбор сохраняется (действует и на следующие видео); если видео играет,
   // профиль применяется сразу, без перезапуска плеера. Стрелки и Enter, Esc/Backspace/P закрывают.
+  // Краткие описания встроенных профилей для окна выбора (список профилей — MpvProfiles.swift / mpv_profiles.rs).
+  const BUILTIN_PROFILE_DESCR = {
+    balanced: ["Фильмы и сериалы: чёткость, лёгкая подчистка полос", "Movies and series: sharp, light deband"],
+    quality: ["Максимум качества, тяжёлый: для мощного железа", "Maximum quality, heavy: for powerful hardware"],
+    fast: ["Лёгкий: 4K, слабое железо, виртуальная машина", "Light: 4K, weak hardware, virtual machine"],
+    "hdr-sdr": ["HDR-видео на обычном мониторе", "HDR video on a regular display"],
+    smooth: ["Плавное движение 24→60 Гц, нагружает GPU", "Smooth 24→60 Hz motion, loads the GPU"],
+    anime: ["Аниме: подчистка полос без зерна", "Anime: deband without grain"],
+    night: ["Ночь: сжатие динамики и выравнивание громкости", "Night: compression and loudness normalization"],
+  };
+
   async function chooseProfile(L, live) {
     if (document.querySelector(".mpv-pick")) return;
     const info = await api.getConfig().catch(() => null);
@@ -470,7 +481,13 @@
     const rows = options.map((o) => {
       const row = document.createElement("div");
       row.className = "mpv-pick__item" + (o.value === saved ? " is-current" : "");
-      row.textContent = o.title;
+      row.appendChild(document.createTextNode(o.title));
+      const descr = BUILTIN_PROFILE_DESCR[o.value];
+      if (descr) {
+        const small = document.createElement("small");
+        small.textContent = ruLang(L) ? descr[0] : descr[1];
+        row.appendChild(small);
+      }
       list.appendChild(row);
       return row;
     });
