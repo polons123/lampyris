@@ -772,7 +772,7 @@ fn main() {
                         lang_en_item.set_checked(!i18n::is_ru());
                         // Язык самой Lampa берётся из localStorage; записываем его и только потом перезагружаем страницу.
                         let p = proxy.clone();
-                        let js = format!("try{{localStorage.setItem('language','{}')}}catch(e){{}}", if i18n::is_ru() { "ru" } else { "en" });
+                        let js = format!("try{{let l='{0}';localStorage.setItem('language',l);localStorage.setItem('tmdb_lang',l)}}catch(e){{}}", if i18n::is_ru() { "ru" } else { "en" });
                         let _ = webview.evaluate_script_with_callback(&js, move |_| { let _ = p.send_event(UserEvent::Load); });
                     }
                     _ => {}
