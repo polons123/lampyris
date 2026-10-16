@@ -324,7 +324,7 @@ mod tests {
         assert_eq!(cfg.ignored[0].line, 2);
     }
 
-    const BUILTIN_NAMES: [&str; 9] = ["balanced", "quality", "fast", "hdr-sdr", "smooth", "anime", "night", "dark", "dark-extreme"];
+    const BUILTIN_NAMES: [&str; 7] = ["balanced", "quality", "fast", "hdr-sdr", "smooth", "anime", "night"];
 
     #[test]
     fn builtin_profiles_are_valid() {
@@ -338,16 +338,16 @@ mod tests {
     fn merged_without_user_file() {
         let cfg = merged("");
         assert_eq!(cfg.profile_names, BUILTIN_NAMES);
-        assert!(cfg.entries(Some("dark")).contains(&e("gamma", "20", None)));
+        assert!(cfg.entries(Some("fast")).contains(&e("scale", "bilinear", None)));
     }
 
     #[test]
     fn user_profile_overrides_builtin() {
-        let cfg = merged("hwdec=no\n[dark]\ngamma=5\n[mine]\nvolume=30");
-        let mut expected: Vec<&str> = BUILTIN_NAMES.iter().copied().filter(|n| *n != "dark").collect();
-        expected.extend(["dark", "mine"]);
+        let cfg = merged("hwdec=no\n[fast]\nscale=nearest\n[mine]\nvolume=30");
+        let mut expected: Vec<&str> = BUILTIN_NAMES.iter().copied().filter(|n| *n != "fast").collect();
+        expected.extend(["fast", "mine"]);
         assert_eq!(cfg.profile_names, expected);
-        assert_eq!(cfg.profiles["dark"], vec![e("gamma", "5", None)]);
+        assert_eq!(cfg.profiles["fast"], vec![e("scale", "nearest", None)]);
         assert_eq!(names(&cfg.global), ["hwdec"]);
         assert!(!cfg.profiles["balanced"].is_empty());
     }

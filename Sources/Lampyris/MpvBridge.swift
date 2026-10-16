@@ -18,7 +18,8 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// то, что нужно плееру: перемотку/остановку, несколько свойств, чтение свойств и открытие http(s)/file.
     private static let allowedCommands: Set<String> = ["seek", "stop"]
     private static let allowedSetProperties: Set<String> = ["aid", "sid", "vid", "mute", "pause", "speed", "volume", "audio-delay", "sub-delay",
-                                                                  "sub-scale", "sub-pos", "sub-color", "sub-border-style", "sub-back-color"]
+                                                                  "sub-scale", "sub-pos", "sub-color", "sub-border-style", "sub-back-color",
+                                                                  "gamma", "brightness", "contrast", "saturation"]
     private static let allowedOpenOptions: Set<String> = ["sid", "demuxer-readahead-secs", "demuxer-max-bytes"]
     private static let allowedSchemes: Set<String> = ["http", "https"]
     /// Свойства, которые странице разрешено читать (всё, что использует mpvTube.js и playbackCover.js).
@@ -26,7 +27,7 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
         "pause", "time-pos", "duration", "speed", "volume", "audio-delay", "sub-delay", "track-list", "video-params",
         "audio-params", "container-fps", "estimated-vf-fps", "video-bitrate", "audio-bitrate", "video-codec",
         "audio-codec-name", "hwdec-current", "frame-drop-count", "decoder-frame-drop-count", "vo-delayed-frame-count",
-        "avsync", "demuxer-cache-state", "demuxer-cache-time",
+        "avsync", "demuxer-cache-state", "demuxer-cache-time", "gamma", "brightness", "contrast", "saturation",
     ]
     /// Потолок размера ответов внешних сервисов (TheIntroDB, субтитры).
     private static let maxResponseBytes = 2_000_000

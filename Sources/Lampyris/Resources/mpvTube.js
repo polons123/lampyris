@@ -319,7 +319,19 @@
       .mpv-help__text { line-height:1.35; }
       .mpv-help__text b { font-size:1.05em; }
       .mpv-help__text div { opacity:.65; font-size:.85em; margin-top:.1em; }
-      .mpv-help .mpv-pick__title { font-size:1.3em; }`;
+      .mpv-help .mpv-pick__title { font-size:1.3em; }
+      .mpv-pic { background:none; align-items:flex-end; padding-bottom:3em; pointer-events:none; }
+      .mpv-pic .mpv-pick__box { pointer-events:auto; min-width:min(34em,90%); background:rgba(30,30,36,.62); }
+      .mpv-pic__row { display:grid; grid-template-columns:8em 1fr 3em; align-items:center; gap:1em; padding:.5em 1em;
+        border-radius:999px; font-weight:600; cursor:pointer; }
+      .mpv-pic__row.focus { background:rgba(255,255,255,.16); }
+      .mpv-pic__track { position:relative; height:.5em; border-radius:999px; background:rgba(255,255,255,.25); touch-action:none; }
+      .mpv-pic__fill { position:absolute; top:0; bottom:0; border-radius:999px; background:#fff; }
+      .mpv-pic__zero { position:absolute; left:50%; top:-.25em; bottom:-.25em; width:2px; background:rgba(255,255,255,.6); }
+      .mpv-pic__knob { position:absolute; top:50%; width:1.1em; height:1.1em; margin:-.55em 0 0 -.55em; border-radius:50%;
+        background:#fff; box-shadow:0 0 6px rgba(0,0,0,.5); }
+      .mpv-pic__val { text-align:right; font-variant-numeric:tabular-nums; }
+      .mpv-pic .mpv-pick__item { justify-content:center; }`;
     document.head.appendChild(style);
   }
 
@@ -491,7 +503,7 @@
       const item = options[i];
       close();
       L.Storage.set(PROFILE_SETTING, item.value);
-      if (live) api.profile(item.value);
+      if (live) api.profile(item.value).then(() => applyPicture(L), () => {});
       showToast(L.Lang.translate("app_settings_mpv_profile") + ": " + item.title);
     };
     function onKey(event) {
@@ -567,8 +579,159 @@
   }
 
 
+  // Панель «Картинка» (клавиша C): ползунки gamma, brightness, contrast и saturation для ручной подстройки,
+  // например тёмного видео. Значения применяются сразу, запоминаются и ставятся при каждом открытии видео.
+  const PICTURE_SETTING = "mpv_picture";
+  const PICTURE_PROPS = [
+    { name: "gamma", ru: "Гамма", en: "Gamma" },
+    { name: "brightness", ru: "Яркость", en: "Brightness" },
+    { name: "contrast", ru: "Контраст", en: "Contrast" },
+    { name: "saturation", ru: "Насыщенность", en: "Saturation" },
+  ];
+  const clampPicture = (v) => Math.max(-100, Math.min(100, Math.round(Number(v)) || 0));
+
+  // Сохранённые значения: только то, что пользователь менял (в том числе явный 0).
+  function readPicture(L) {
+    let raw = {};
+    try { raw = JSON.parse(String(L.Storage.get(PICTURE_SETTING, "") || "{}")) || {}; } catch (e) { raw = {}; }
+    const out = {};
+    PICTURE_PROPS.forEach((p) => { if (Number.isFinite(Number(raw[p.name])) && raw[p.name] !== null) out[p.name] = clampPicture(raw[p.name]); });
+    return out;
+  }
+
+  function applyPicture(L) {
+    const values = readPicture(L);
+    Object.keys(values).forEach((name) => { api.set(name, values[name]).catch(() => {}); });
+  }
+
+  async function openPicture(L) {
+    if (document.querySelector(".mpv-pick")) return;
+    addUiStyle();
+    const ru = ruLang(L);
+    const touched = readPicture(L);
+    const values = {};
+    for (const p of PICTURE_PROPS) {
+      values[p.name] = p.name in touched ? touched[p.name] : clampPicture(await api.get(p.name).catch(() => 0));
+    }
+    if (document.querySelector(".mpv-pick")) return;
+    const overlay = document.createElement("div");
+    overlay.className = "mpv-pick mpv-pic";
+    overlay.innerHTML = '<div class="mpv-pick__box"><div class="mpv-pick__title"></div><div class="mpv-pick__list"></div><div class="mpv-pick__hint"></div></div>';
+    overlay.querySelector(".mpv-pick__title").textContent = ru ? "Картинка" : "Picture";
+    overlay.querySelector(".mpv-pick__hint").textContent = ru
+      ? "↑ ↓ выбор · ← → изменить (Shift — точнее) · 0 — в ноль · R — сброс · Esc"
+      : "↑ ↓ select · ← → change (Shift — finer) · 0 — zero · R — reset · Esc";
+    const list = overlay.querySelector(".mpv-pick__list");
+    const ui = {};
+    const rows = PICTURE_PROPS.map((p, i) => {
+      const row = document.createElement("div");
+      row.className = "mpv-pic__row";
+      const label = document.createElement("span");
+      label.textContent = ru ? p.ru : p.en;
+      const track = document.createElement("div");
+      track.className = "mpv-pic__track";
+      const fill = document.createElement("div");
+      fill.className = "mpv-pic__fill";
+      const zero = document.createElement("div");
+      zero.className = "mpv-pic__zero";
+      const knob = document.createElement("div");
+      knob.className = "mpv-pic__knob";
+      const val = document.createElement("span");
+      val.className = "mpv-pic__val";
+      // Lampa подменяет Element.prototype.append версией с одним аргументом, поэтому только appendChild.
+      [fill, zero, knob].forEach((n) => track.appendChild(n));
+      [label, track, val].forEach((n) => row.appendChild(n));
+      list.appendChild(row);
+      ui[p.name] = { fill, knob, val };
+      const fromPointer = (e) => {
+        const r = track.getBoundingClientRect();
+        setValue(p.name, ((e.clientX - r.left) / r.width) * 200 - 100);
+      };
+      track.addEventListener("pointerdown", (e) => {
+        focus(i);
+        track.setPointerCapture(e.pointerId);
+        fromPointer(e);
+        track.onpointermove = fromPointer;
+      });
+      const release = () => { track.onpointermove = null; };
+      track.addEventListener("pointerup", release);
+      track.addEventListener("pointercancel", release);
+      row.addEventListener("click", () => focus(i));
+      return row;
+    });
+    const resetRow = document.createElement("div");
+    resetRow.className = "mpv-pick__item";
+    resetRow.textContent = ru ? "Сбросить всё" : "Reset all";
+    resetRow.addEventListener("click", () => { focus(PICTURE_PROPS.length); resetAll(); });
+    list.appendChild(resetRow);
+    rows.push(resetRow);
+
+    let index = 0;
+    function focus(i) {
+      index = (i + rows.length) % rows.length;
+      rows.forEach((r, k) => r.classList.toggle("focus", k === index));
+    }
+    function paint(name) {
+      const v = values[name];
+      const pct = (v + 100) / 2;
+      const u = ui[name];
+      u.fill.style.left = Math.min(50, pct) + "%";
+      u.fill.style.width = Math.abs(pct - 50) + "%";
+      u.knob.style.left = pct + "%";
+      u.val.textContent = (v > 0 ? "+" : "") + v;
+    }
+    function setValue(name, v) {
+      v = clampPicture(v);
+      if (values[name] === v && name in touched) return;
+      values[name] = v;
+      touched[name] = v;
+      paint(name);
+      api.set(name, v).catch(() => {});
+      L.Storage.set(PICTURE_SETTING, JSON.stringify(touched));
+    }
+    async function resetAll() {
+      Object.keys(touched).forEach((k) => delete touched[k]);
+      L.Storage.set(PICTURE_SETTING, "");
+      for (const p of PICTURE_PROPS) await api.set(p.name, 0).catch(() => {});
+      // Профиль возвращает свои значения (если он их задаёт), затем читаем, что получилось.
+      await api.profile(currentProfile(L)).catch(() => {});
+      for (const p of PICTURE_PROPS) { values[p.name] = clampPicture(await api.get(p.name).catch(() => 0)); paint(p.name); }
+      showToast(ru ? "Картинка сброшена" : "Picture reset");
+    }
+    PICTURE_PROPS.forEach((p) => paint(p.name));
+
+    const close = () => {
+      window.removeEventListener("keydown", onKey, true);
+      overlay.remove();
+      // keyup закрывающей клавиши не должен дойти до Lampa (Enter поставил бы паузу).
+      const timer = setTimeout(release, 1000);
+      function release() { clearTimeout(timer); window.removeEventListener("keyup", swallow, true); window.removeEventListener("keypress", swallow, true); }
+      swallowDone = (e) => { if (e.type === "keyup") setTimeout(release, 0); };
+    };
+    let swallowDone = null;
+    function swallow(e) { e.preventDefault(); e.stopImmediatePropagation(); if (swallowDone) swallowDone(e); }
+    function onKey(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const prop = PICTURE_PROPS[index];
+      if (e.key === "ArrowUp") focus(index - 1);
+      else if (e.key === "ArrowDown") focus(index + 1);
+      else if (prop && (e.key === "ArrowLeft" || e.key === "ArrowRight")) setValue(prop.name, values[prop.name] + (e.key === "ArrowRight" ? 1 : -1) * (e.shiftKey ? 1 : 5));
+      else if (e.repeat) return;
+      else if (prop && e.key === "0") setValue(prop.name, 0);
+      else if (e.code === "KeyR" || (!prop && e.key === "Enter")) resetAll();
+      else if (e.key === "Escape" || e.key === "Backspace" || e.key === "BrowserBack" || e.code === "KeyC" || (prop && e.key === "Enter")) close();
+    }
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", swallow, true);
+    window.addEventListener("keypress", swallow, true);
+    document.body.appendChild(overlay);
+    focus(0);
+  }
+
+
   // Клавиши плеера (пока играет mpv): [ ] — скорость на 0.25 (\ — сброс), , . — задержка звука на 0.1 с,
-  // Z X — задержка субтитров, S — скриншот, I — окно статистики. Работают при видео и при панели плеера.
+  // Z X — задержка субтитров, S — скриншот, I — окно статистики, C — панель «Картинка». Работают при видео и при панели плеера.
   let speedTouched = false;
   let delaysTouched = false;
   let statsPanelTimer = null;
@@ -700,6 +863,7 @@
       [["S"], "Скриншот", "Сохраняет текущий кадр в папку «Изображения/Lampyris» (PNG, в размере картинки на экране)."],
       [["I"], "Статистика", "Окно с кодеками, декодером, пропущенными кадрами, сетью, буфером и данными торрента. Повторное нажатие закрывает."],
       [["P"], "Профиль mpv", "Выбор набора опций из mpv.conf. Применяется сразу и запоминается."],
+      [["C"], "Картинка", "Ползунки гаммы, яркости, контраста и насыщенности для ручной подстройки (например, тёмного видео). Значения запоминаются и ставятся при каждом открытии видео; «Сбросить всё» возвращает профиль."],
       [["U"], "Субтитры из интернета", "Поиск русских или английских субтитров (OpenSubtitles), выбор варианта и включение. Есть и кнопка на панели плеера."],
       [["N"], "Пропустить", "Пропускает заставку, пересказ, титры или анонс, пока внизу справа показана кнопка «Пропустить…» (таймкоды TheIntroDB)."],
       [["H"], "Справка", "Это окно. Закрыть: Esc, Enter или H."],
@@ -714,6 +878,7 @@
       [["S"], "Screenshot", "Saves the current frame to Pictures/Lampyris (PNG, at the on-screen picture size)."],
       [["I"], "Statistics", "Window with codecs, decoder, dropped frames, network, buffer and torrent data. Press again to close."],
       [["P"], "mpv profile", "Pick a set of options from mpv.conf. Applies immediately and is remembered."],
+      [["C"], "Picture", "Sliders for gamma, brightness, contrast and saturation for manual tuning (for example, a dark video). Values are remembered and set whenever a video opens; “Reset all” brings back the profile."],
       [["U"], "Online subtitles", "Search Russian or English subtitles (OpenSubtitles), pick a variant and turn it on. A panel button does the same."],
       [["N"], "Skip", "Skips the intro, recap, credits or preview while the “Skip…” button is shown at the bottom right (TheIntroDB timestamps)."],
       [["H"], "Help", "This window. Close: Esc, Enter or H."],
@@ -788,6 +953,7 @@
         KeyX: () => changeDelay(L, "sub-delay", 0.1, "Задержка субтитров", "Subtitle delay"),
         KeyS: () => !event.repeat && takeScreenshot(L),
         KeyI: () => !event.repeat && toggleStatsPanel(L),
+        KeyC: () => !event.repeat && openPicture(L),
         KeyH: () => !event.repeat && openHelp(L),
         KeyN: () => !event.repeat && active && active.__skipNow && active.__skipNow(),
         KeyU: () => !event.repeat && active && active.__subsMenu && active.__subsMenu(),
@@ -1837,7 +2003,7 @@
         volume: Math.round(state.volume * 100),
         profile: window.Lampa && window.Lampa.Storage ? String(window.Lampa.Storage.get(PROFILE_SETTING, "") || "") : "",
         mpvOptions: bufferOptions(),
-      }).then((r) => { if (!(r && r.ok)) fail("open failed"); }, (e) => fail(String(e)));
+      }).then((r) => { if (!(r && r.ok)) fail("open failed"); else applyPicture(L); }, (e) => fail(String(e)));
     }
 
     el.load = () => {

@@ -65,29 +65,6 @@ deband-grain=0
 
 [night]
 af=acompressor=ratio=4,loudnorm=I=-16:TP=-1.5:LRA=11
-
-[dark]
-gamma=20
-brightness=8
-contrast=6
-saturation=6
-deband=yes
-deband-iterations=3
-deband-threshold=45
-deband-range=20
-deband-grain=6
-
-[dark-extreme]
-gamma=45
-brightness=15
-contrast=12
-saturation=12
-deband=yes
-deband-iterations=4
-deband-threshold=55
-deband-range=24
-deband-grain=10
-dither-depth=auto
 "#;
 
 /// Описания профилей для шаблона mpv.conf.
@@ -104,25 +81,9 @@ pub const DOC_RU: &str = r#"# ── Встроенные профили (выб
 #                Нагружает GPU; если кадры пропускаются, вернитесь на balanced.
 # anime        — аниме: сильнее подчистка полос без зерна (на плоских заливках зерно заметно).
 # night        — ночной режим: сжатие динамического диапазона и выравнивание громкости (тихие диалоги, громкие взрывы).
-# dark         — тёмная картинка: умеренный подъём теней (gamma 20, brightness 8, contrast 6, saturation 6).
-# dark-extreme — очень тёмная картинка (ночные сцены, плохая раскодировка, тёмный экран): gamma 45,
-#                brightness 15, contrast 12, saturation 12. Усиливает шум и снижает глубину чёрного.
 #
-# Ручной тюнинг тёмной картинки: скопируйте [dark] ниже и меняйте значения по 5–10 за раз
-# (диапазон каждого параметра от -100 до 100, 0 — без изменений).
-#   gamma      — главный параметр: поднимает полутона и тени, почти не трогая белое.
-#   brightness — сдвигает всё, включая чёрный: слишком много даёт серую «дымку».
-#   contrast   — растягивает яркость; после подъёма gamma чуть добавьте, чтобы вернуть глубину.
-#   saturation — тёмные кадры выглядят блёклыми, +5…+10 возвращает цвет.
-#   deband     — в поднятых тенях проступают полосы, поэтому подчистку стоит усилить.
-#
-# [dark]
-# gamma=20
-# brightness=8
-# contrast=6
-# saturation=6
-# deband=yes
-# deband-iterations=3
+# Яркость, контраст, гамму и насыщенность (например, для тёмного видео) настраивают во время просмотра
+# клавишей C: ползунки применяются сразу, запоминаются и не зависят от выбранного профиля.
 #
 # hdr-compute-peak считает пик яркости по кадрам (D3D11 поддерживает compute-шейдеры).
 "#;
@@ -140,25 +101,9 @@ pub const DOC_EN: &str = r#"# ── Built-in profiles (chosen in Settings → M
 #                Loads the GPU; if frames drop, go back to balanced.
 # anime        — anime: stronger deband without grain (grain is visible on flat fills).
 # night        — night mode: dynamic range compression and loudness normalization (quiet dialogue, loud explosions).
-# dark         — dark picture: moderately lifts shadows (gamma 20, brightness 8, contrast 6, saturation 6).
-# dark-extreme — very dark picture (night scenes, poor encodes, dim screen): gamma 45,
-#                brightness 15, contrast 12, saturation 12. Amplifies noise and reduces black depth.
 #
-# Manual tuning of a dark picture: copy [dark] below and change values by 5–10 at a time
-# (each parameter ranges from -100 to 100, 0 means unchanged).
-#   gamma      — the main knob: lifts midtones and shadows, barely touching whites.
-#   brightness — shifts everything including black: too much gives a grey haze.
-#   contrast   — stretches brightness; after raising gamma add a little to bring back depth.
-#   saturation — dark frames look washed out, +5…+10 brings the colour back.
-#   deband     — banding shows in lifted shadows, so strengthen debanding.
-#
-# [dark]
-# gamma=20
-# brightness=8
-# contrast=6
-# saturation=6
-# deband=yes
-# deband-iterations=3
+# Brightness, contrast, gamma and saturation (for example, for a dark video) are tuned during playback
+# with the C key: the sliders apply immediately, are remembered and do not depend on the chosen profile.
 #
 # hdr-compute-peak measures the brightness peak per frame (D3D11 supports compute shaders).
 "#;
