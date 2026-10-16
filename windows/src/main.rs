@@ -8,6 +8,7 @@ mod http;
 mod i18n;
 mod log;
 mod mpv;
+mod mpv_profiles;
 mod pages;
 mod player;
 mod settings;
@@ -162,13 +163,14 @@ impl WinState {
     }
 }
 
-fn mpv_conf_template() -> &'static str {
-    tr("# mpv.conf плеера Lampa. Формат: опция=значение, по одной в строке.\n\
+fn mpv_conf_template() -> String {
+    let head = tr("# mpv.conf плеера Lampa. Формат: опция=значение, по одной в строке.\n\
 # Опции до первого [раздела] общие; [имя] — профиль, выбирается в Настройки → MPV\n\
 # или клавишей P во время видео. Файл читается при каждом открытии видео.\n#\n# hwdec=d3d11va\n#\n# [bright]\n# brightness=20\n",
        "# mpv.conf of the Lampa player. Format: option=value, one per line.\n\
 # Options before the first [section] are common; [name] is a profile, chosen in Settings → MPV\n\
-# or with the P key during a video. The file is read each time a video is opened.\n#\n# hwdec=d3d11va\n#\n# [bright]\n# brightness=20\n")
+# or with the P key during a video. The file is read each time a video is opened.\n#\n# hwdec=d3d11va\n#\n# [bright]\n# brightness=20\n");
+    format!("{head}#\n{}", tr(mpv_profiles::RU, mpv_profiles::EN))
 }
 
 fn open_mpv_conf(select_in_explorer: bool) {
