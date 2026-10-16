@@ -322,7 +322,7 @@
       .mpv-help .mpv-pick__title { font-size:1.3em; }
       .mpv-pic { background:none; align-items:flex-end; padding-bottom:3em; pointer-events:none; }
       .mpv-pic .mpv-pick__box { pointer-events:auto; min-width:min(34em,90%); background:rgba(30,30,36,.62); }
-      .mpv-pic__row { display:grid; grid-template-columns:11em 1fr 3.4em; align-items:center; gap:1em; padding:.5em 1em;
+      .mpv-pic__row { display:grid; grid-template-columns:12.5em 1fr 3.4em; align-items:center; gap:1em; padding:.5em 1em;
         border-radius:999px; font-weight:600; cursor:pointer; }
       .mpv-pic__row.focus { background:rgba(255,255,255,.16); }
       .mpv-pic__track { position:relative; height:.5em; border-radius:999px; background:rgba(255,255,255,.25); touch-action:none; }
@@ -331,6 +331,12 @@
       .mpv-pic__knob { position:absolute; top:50%; width:1.1em; height:1.1em; margin:-.55em 0 0 -.55em; border-radius:50%;
         background:#fff; box-shadow:0 0 6px rgba(0,0,0,.5); }
       .mpv-pic__val { text-align:right; font-variant-numeric:tabular-nums; }
+      .mpv-pic__row > span:first-child { white-space:nowrap; }
+      .mpv-pic__switch { position:relative; width:3em; height:1.5em; border-radius:999px; background:rgba(255,255,255,.25); transition:background-color .15s; }
+      .mpv-pic__switch.on { background:#fff; }
+      .mpv-pic__dot { position:absolute; top:.15em; left:.15em; width:1.2em; height:1.2em; border-radius:50%; background:#fff;
+        box-shadow:0 0 4px rgba(0,0,0,.5); transition:left .15s, background-color .15s; }
+      .mpv-pic__switch.on .mpv-pic__dot { left:1.65em; background:#000; }
       .mpv-pic .mpv-pick__item { justify-content:center; }`;
     document.head.appendChild(style);
   }
@@ -611,8 +617,11 @@
   const AUTOSDR_DEFAULTS = { on: false, gamma: 8, saturation: 4 };
   const clampPicture = (v) => Math.max(-100, Math.min(100, Math.round(Number(v)) || 0));
 
+  // Lampa.Storage.get сам разбирает JSON и возвращает уже объект, поэтому принимаем и объект, и строку.
   function readJson(L, key) {
-    try { return JSON.parse(String(L.Storage.get(key, "") || "{}")) || {}; } catch (e) { return {}; }
+    const v = L.Storage.get(key, "");
+    if (v && typeof v === "object") return v;
+    try { return JSON.parse(String(v || "{}")) || {}; } catch (e) { return {}; }
   }
 
   // Сохранённые ручные значения: только то, что пользователь менял (в том числе явный 0).
@@ -697,7 +706,7 @@
       text: () => (auto.on ? (ru ? "вкл" : "on") : (ru ? "выкл" : "off")),
       toggle: () => { auto.on = !auto.on; saveAuto(); scheduleApply(); },
     });
-    [["gamma", ru ? "· Гамма (SDR)" : "· Gamma (SDR)"], ["saturation", ru ? "· Насыщенность (SDR)" : "· Saturation (SDR)"]].forEach(([name, label]) => {
+    [["gamma", ru ? "SDR · Гамма" : "SDR · Gamma"], ["saturation", ru ? "SDR · Насыщенность" : "SDR · Saturation"]].forEach(([name, label]) => {
       defs.push({ kind: "slider", label, value: () => auto[name], set: (v) => { auto[name] = clampPicture(v); saveAuto(); if (auto.on) scheduleApply(); } });
     });
     defs.push({ kind: "reset", label: ru ? "Сбросить всё" : "Reset all" });
@@ -713,15 +722,6 @@
 
     let index = 0;
     const rows = defs.map((def, i) => {
-      if (def.kind === "reset") {
-        const row = document.createElement("div");
-        row.className = "mpv-pick__item";
-        row.textContent = def.label;
-        row.addEventListener("click", () => { focus(i); resetAll(); });
-        list.appendChild(row);
-        def.row = row;
-        return row;
-      }
       const row = document.createElement("div");
       row.className = "mpv-pic__row";
       const label = document.createElement("span");
@@ -759,8 +759,17 @@
         track.addEventListener("pointerup", release);
         track.addEventListener("pointercancel", release);
       } else {
-        row.appendChild(document.createElement("span"));
-        row.addEventListener("click", () => { focus(i); def.toggle(); paint(def); });
+        // Переключатель и «Сбросить всё» — в том же шаблоне: подпись, элемент управления, значение.
+        const control = document.createElement("div");
+        if (def.kind === "toggle") {
+          control.className = "mpv-pic__switch";
+          const dot = document.createElement("div");
+          dot.className = "mpv-pic__dot";
+          control.appendChild(dot);
+          def.switchEl = control;
+        }
+        row.appendChild(control);
+        row.addEventListener("click", () => { focus(i); if (def.kind === "toggle") { def.toggle(); paint(def); } else resetAll(); });
       }
       row.appendChild(val);
       row.addEventListener("click", () => focus(i));
@@ -774,8 +783,8 @@
       rows.forEach((r, k) => r.classList.toggle("focus", k === index));
     }
     function paint(def) {
-      if (def.kind === "toggle") { def.val.textContent = def.text(); return; }
-      if (def.kind !== "slider") return;
+      if (def.kind === "toggle") { def.val.textContent = def.text(); def.switchEl.classList.toggle("on", auto.on); return; }
+      if (def.kind === "reset") { def.val.textContent = "R"; return; }
       const v = def.value();
       const pct = (v + 100) / 2;
       def.fill.style.left = Math.min(50, pct) + "%";
