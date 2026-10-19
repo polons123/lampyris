@@ -342,8 +342,8 @@ fn pick_backup(hwnd: isize) -> Option<backup::Backup> {
 }
 
 /// Наименьший размер рабочей области окна (логические пиксели).
-const MIN_WIDTH: f64 = 800.0;
-const MIN_HEIGHT: f64 = 600.0;
+const MIN_WIDTH: f64 = 674.0;
+const MIN_HEIGHT: f64 = 371.0;
 
 /// Метка на главном окне: по ней второй экземпляр находит первое окно (заголовок меняется, класс общий).
 const MAIN_WINDOW_PROP: &str = "LampyrisMainWindow";
@@ -594,6 +594,8 @@ fn main() {
     let verbose_item = check("verbose", "Подробный журнал", "Verbose log", log::is_verbose_setting());
     let single_item = check("single", "Запретить несколько экземпляров", "Prevent multiple instances", settings::single_instance());
     let auto_update_item = check("updateauto", "Проверять обновления автоматически", "Check for updates automatically", update::auto_check());
+    let top_item = check("ontop", "Поверх других окон", "Float on top", false);
+    let _ = top_item.set_accelerator("Ctrl+T".parse::<muda::accelerator::Accelerator>().ok());
     let lang_ru_item = check("lang_ru", "Русский", "Русский", i18n::is_ru());
     let lang_en_item = check("lang_en", "English", "English", !i18n::is_ru());
     {
@@ -614,7 +616,7 @@ fn main() {
         };
         let _ = lang.append_items(&[&lang_ru_item, &lang_en_item]);
         let _ = file.append_items(&[&item("server", "Изменить адрес сервера…\tCtrl+,", "Change server address…\tCtrl+,"), &item("reload", "Перезагрузить\tF5", "Reload\tF5"), &PredefinedMenuItem::separator(), &item("quit", "Выход\tAlt+F4", "Exit\tAlt+F4")]);
-        let _ = view.append(&item("fullscreen", "Полный экран\tF11", "Full screen\tF11"));
+        let _ = view.append_items(&[&item("fullscreen", "Полный экран\tF11", "Full screen\tF11"), &top_item]);
         let _ = tools.append_items(&[&item("conf", "Открыть mpv.conf", "Open mpv.conf"), &item("confdir", "Показать mpv.conf в Проводнике", "Show mpv.conf in Explorer"), &PredefinedMenuItem::separator(), &item("backup", "Сохранить настройки в файл…", "Save settings to a file…"), &item("restore", "Восстановить настройки из файла…", "Restore settings from a file…"), &PredefinedMenuItem::separator(), &lang, &verbose_item, &single_item, &item("logdir", "Показать журнал в Проводнике", "Show log in Explorer")]);
         let _ = help.append_items(&[&item("update", "Проверить обновления…", "Check for updates…"), &auto_update_item, &PredefinedMenuItem::separator(), &item("about", "О программе Lampyris", "About Lampyris")]);
         let _ = menu.append_items(&[&file, &view, &tools, &help]);
@@ -704,6 +706,11 @@ fn main() {
                     "server" => { let _ = proxy.send_event(UserEvent::App("change".into(), None)); }
                     "reload" => { log::info("app", "перезагрузка страницы"); let _ = proxy.send_event(UserEvent::Load); }
                     "fullscreen" => { let _ = proxy.send_event(UserEvent::Window(vec![Value::from("fullscreen"), Value::from("toggle")])); }
+                    "ontop" => {
+                        let on = !window.is_always_on_top();
+                        window.set_always_on_top(on);
+                        top_item.set_checked(on);
+                    }
                     "quit" => {
                         if let Some(p) = &player { p.shutdown(); }
                         win_state.maximized = window.is_maximized();

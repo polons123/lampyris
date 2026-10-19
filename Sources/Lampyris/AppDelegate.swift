@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let window = NSWindow(contentViewController: controller)
         window.setContentSize(NSSize(width: 1280, height: 720))
         window.title = "Lampyris"
+        window.contentMinSize = NSSize(width: 674, height: 371)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         // Размер и положение запоминаются в UserDefaults; без сохранённых — по центру экрана.
         if !window.setFrameUsingName(Self.frameName) { window.center() }
@@ -299,7 +300,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSWorkspace.shared.open(Log.folderURL)
     }
 
+    /// Поверх других окон (как «Float on Top» в IINA); при перезапуске не запоминается.
+    @objc func toggleFloatOnTop() {
+        guard let window else { return }
+        window.level = window.level == .floating ? .normal : .floating
+    }
+
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(toggleFloatOnTop) { item.state = window?.level == .floating ? .on : .off }
         if item.action == #selector(toggleVerboseLog) { item.state = Log.isVerboseSetting ? .on : .off }
         if item.action == #selector(setLanguage(_:)) { item.state = (item.tag == 0) == (Language.current == .ru) ? .on : .off }
         if item.action == #selector(toggleAutoUpdateCheck) { item.state = Updater.shared.autoCheck ? .on : .off }
@@ -464,6 +472,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         reload.target = self
         let full = viewMenu.addItem(withTitle: tr("Полный экран", "Enter Full Screen"), action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
         full.keyEquivalentModifierMask = [.command, .control]
+        let top = viewMenu.addItem(withTitle: tr("Поверх других окон", "Float on Top"), action: #selector(toggleFloatOnTop), keyEquivalent: "t")
+        top.keyEquivalentModifierMask = [.command, .control]
         viewItem.submenu = viewMenu
         let windowItem = NSMenuItem()
         main.addItem(windowItem)

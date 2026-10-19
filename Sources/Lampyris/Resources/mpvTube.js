@@ -1061,6 +1061,29 @@
     document.body.appendChild(overlay);
   }
 
+  // Колесо в плеере Lampa превращает в «следующая/предыдущая серия», даже когда открыто меню.
+  // Поэтому Lampa колесо не отдаём: в меню Lampa оно листает пункты (как стрелки), в наших окнах — прокручивает список.
+  function installPlayerWheel() {
+    let last = 0;
+    window.addEventListener("wheel", (event) => {
+      if (!active || !document.documentElement.classList.contains(CLASS)) return;
+      if (event.ctrlKey || event.metaKey) return;
+      if (document.querySelector(".mpv-conf, .mpv-pick")) { event.stopImmediatePropagation(); return; }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!document.body.classList.contains("selectbox--open") || !event.deltaY) return;
+      const now = Date.now();
+      if (now - last < 60) return;
+      last = now;
+      const key = event.deltaY > 0 ? "ArrowDown" : "ArrowUp";
+      const keyCode = event.deltaY > 0 ? 40 : 38;
+      const target = document.activeElement || document.body;
+      ["keydown", "keyup"].forEach((type) => {
+        target.dispatchEvent(new KeyboardEvent(type, { key, code: key, keyCode, which: keyCode, bubbles: true, cancelable: true }));
+      });
+    }, { capture: true, passive: false });
+  }
+
   function installPlayerKeys(L) {
     window.addEventListener("keydown", (event) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -2268,6 +2291,7 @@
     installProfileHotkey(L);
     installArrowKeys(L);
     installPlayerKeys(L);
+    installPlayerWheel();
     L.PlayerVideo.registerTube({
       name: "mpv",
       // WebKit не играет, например, MKV; mpv берёт все http(s)/file-источники, пока включён в настройках.
