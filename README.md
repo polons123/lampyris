@@ -2,7 +2,7 @@
 
 **Русский** | [English](README.en.md)
 
-Неофициальный клиент [Lampa](https://github.com/yumata/lampa) для macOS (Apple Silicon и Intel) и Windows (x64 и arm64). Lampa — проект своих авторов, Lampyris с ним не связан и не поддерживается им. На macOS приложение написано на Swift/AppKit с WKWebView, на Windows на Rust с WebView2; воспроизведение везде через libmpv.
+Неофициальный клиент [Lampa](https://github.com/yumata/lampa) для macOS (Apple Silicon и Intel) и Windows (x64 и arm64); версия для Android (планшеты, телефоны, ТВ-приставки, ARM32/ARM64) в разработке: [android/README.md](android/README.md). Lampa — проект своих авторов, Lampyris с ним не связан и не поддерживается им. На macOS приложение написано на Swift/AppKit с WKWebView, на Windows на Rust с WebView2; воспроизведение везде через libmpv.
 
 ## Почему Lampyris
 - **Настоящий плеер mpv вместо плеера в браузере.** Аппаратное декодирование (VideoToolbox на macOS, D3D11VA на Windows), AC3/DTS и 4K/HDR без перекодирования и без «тормозов» веб-плеера.

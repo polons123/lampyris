@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+const source=fs.readFileSync(new URL('../../Sources/Lampyris/Resources/mpvTube.js',import.meta.url),'utf8');
+const code=source.slice(source.indexOf('    function skipTick(t) {'),source.indexOf('    el.__skipNow'));
+const intro={type:'intro',start:10,end:30};const credits={type:'credits',start:100,end:120};
+let mode='auto',jump=null,button=null;
+const ctx={skip:{segments:[intro,credits],current:null,done:new Set(),shownFor:null},L:{Storage:{get:()=>mode},Lang:{translate:x=>x}},SKIP_SETTING:'skip',SKIP_LABELS:{intro:['intro','intro'],credits:['credits','credits']},skipEnd:s=>s.end,skipTo:s=>{jump=s.end;ctx.skip.done.add(s);},showToast:()=>{},hideSkipButton:()=>{button=null;},showSkipButton:label=>{button=label;},ruLang:()=>true};
+vm.createContext(ctx);vm.runInContext(code,ctx);
+ctx.skipTick(15);assert.equal(jump,30);
+jump=null;ctx.skipTick(105);assert.equal(jump,null);assert.equal(button,'credits');
+mode='button';ctx.skip.current=null;ctx.skip.done.clear();ctx.skipTick(15);assert.equal(jump,null);assert.equal(button,'intro');
+mode='off';ctx.skip.current=null;button=null;ctx.skipTick(15);assert.equal(button,null);
+console.log('Skip: auto intro, manual credits, button mode and off OK');

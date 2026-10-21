@@ -2,7 +2,7 @@
 
 [Русский](README.md) | **English**
 
-An unofficial [Lampa](https://github.com/yumata/lampa) client for macOS (Apple Silicon and Intel) and Windows (x64 and arm64; Rust, WebView2, libmpv — see [docs/ARCHITECTURE-windows.md](docs/ARCHITECTURE-windows.md), in Russian). Lampa is a project of its own authors; Lampyris is not affiliated with it and is not supported by it. The app is written in Swift/AppKit, with a WKWebView and playback through libmpv.
+An unofficial [Lampa](https://github.com/yumata/lampa) client for macOS (Apple Silicon and Intel) and Windows (x64 and arm64; an Android version for tablets, phones and TV boxes, ARM32/ARM64, is in development: [android/README.md](android/README.md); Rust, WebView2, libmpv — see [docs/ARCHITECTURE-windows.md](docs/ARCHITECTURE-windows.md), in Russian). Lampa is a project of its own authors; Lampyris is not affiliated with it and is not supported by it. The app is written in Swift/AppKit, with a WKWebView and playback through libmpv.
 
 ## Why Lampyris
 - **A real mpv player instead of a browser player.** Hardware decoding (VideoToolbox on macOS, D3D11VA on Windows), AC3/DTS and 4K/HDR without transcoding and without the stutter of a web player.

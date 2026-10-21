@@ -1,0 +1,67 @@
+plugins { id 'com.android.application' }
+
+// Версия одна на все платформы: scripts/VERSION (X.Y.Z). versionCode = X*10000 + Y*100 + Z.
+def appVersion = file('../../scripts/VERSION').text.trim()
+def versionParts = appVersion.tokenize('.')*.toInteger()
+android {
+    namespace 'io.github.polons123.lampyris'
+    buildFeatures { buildConfig true }
+    compileSdk 35
+    defaultConfig {
+        applicationId 'io.github.polons123.lampyris.android'
+        minSdk 26
+        targetSdk 35
+        versionCode versionParts[0] * 10000 + versionParts[1] * 100 + versionParts[2]
+        versionName appVersion
+        ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
+    }
+    splits { abi { enable true; reset(); include 'armeabi-v7a', 'arm64-v8a'; universalApk true } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += ['**/*.so'] } }
+}
+// Общие скрипты плеера лежат в одном месте для всех платформ (Sources/Lampyris/Resources) и копируются в assets при сборке.
+def sharedAssets = layout.buildDirectory.dir('generated/shared-assets')
+tasks.register('syncSharedScripts', Copy) {
+    from('../../Sources/Lampyris/Resources') { include 'mpvTube.js', 'playbackCover.js' }
+    into sharedAssets
+}
+android.sourceSets.main.assets.srcDir(sharedAssets)
+tasks.named('preBuild').configure { dependsOn 'syncSharedScripts' }
+dependencies { implementation 'androidx.webkit:webkit:1.12.1' }
+
+// Автономные проверки конфигурации входят в стандартную проверку Gradle.
+def configTestOutput = layout.buildDirectory.dir('player-config-tests')
+tasks.register('compilePlayerConfigTest', JavaCompile) {
+    source = files('src/main/java/io/github/polons123/lampyris/PlayerConfig.java', '../tests/PlayerConfigTest.java', 'src/main/java/io/github/polons123/lampyris/NetworkAddressPolicy.java', '../tests/NetworkAddressPolicyTest.java')
+    classpath = files()
+    destinationDirectory = configTestOutput
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+}
+tasks.register('playerConfigTest', JavaExec) {
+    dependsOn 'compilePlayerConfigTest'
+    classpath = files(configTestOutput)
+    mainClass = 'io.github.polons123.lampyris.PlayerConfigTest'
+}
+tasks.named('check').configure { dependsOn 'playerConfigTest' }
+
+tasks.register('networkAddressPolicyTest', JavaExec) {
+    dependsOn 'compilePlayerConfigTest'
+    classpath = files(configTestOutput)
+    mainClass = 'io.github.polons123.lampyris.NetworkAddressPolicyTest'
+}
+tasks.named('check').configure { dependsOn 'networkAddressPolicyTest' }
+
+// Пакет корневых сертификатов (Mozilla, curl.se/ca) устаревает: без свежих корней TLS к новым центрам сертификации ломается молча.
+tasks.register('caBundleAge') {
+    doLast {
+        def head = file('src/main/assets/cacert.pem').readLines().take(6).join('\n')
+        def m = (head =~ /as of: \w+ (\w+)\s+(\d+) [\d:]+ (\d{4}) GMT/)
+        if (!m.find()) { logger.warn('cacert.pem: не найдена дата выпуска пакета'); return }
+        def date = new java.text.SimpleDateFormat('MMM d yyyy', Locale.ENGLISH).parse("${m.group(1)} ${m.group(2)} ${m.group(3)}")
+        long days = (System.currentTimeMillis() - date.time) / 86400000L
+        if (days > 180) logger.warn("cacert.pem старше ${days} дн.: обновите с https://curl.se/ca/cacert.pem и сверьте SHA-256")
+        else println "cacert.pem: ${days} дн."
+    }
+}
+tasks.named('check').configure { dependsOn 'caBundleAge' }

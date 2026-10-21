@@ -1,0 +1,8 @@
+.gradle/
+build/
+app/build/
+local.properties
+*.keystore
+*.jks
+# Нативные библиотеки (около 58 МБ) в git не хранятся: контрольные суммы в native/SHA256SUMS.txt
+app/src/main/jniLibs/

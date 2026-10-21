@@ -29,3 +29,19 @@
 - **TheIntroDB** (таймкоды заставок и титров): https://theintrodb.org, используется только открытый API, без их кода.
 - **Stremio OpenSubtitles v3 / OpenSubtitles** (субтитры): аддон https://opensubtitles-v3.strem.io; субтитры принадлежат их авторам.
 - **Lampa** (интерфейс): загружается с вашего сервера, в приложение не входит.
+
+## Android (`android/`)
+
+- Общие скрипты плеера и профили: Lampyris, GPL-3.0-or-later, https://github.com/polons123/lampyris. Исходная локальная версия использована без изменений основного репозитория.
+- JNI и схема интеграции libmpv: mpv-android, MIT, https://github.com/mpv-android/mpv-android. Текст лицензии сохранён в android/MPV-ANDROID-LICENSE. JNI-исходники и исходные скрипты сборки включены в android/native/.
+- Готовые libmpv, FFmpeg и сопутствующие библиотеки взяты из ранее подготовленной локальной ARM64-сборки mpv-android-lampyris. Хеши файлов включены в android/native/SHA256SUMS.txt. Проект распространяет свою оболочку под GPL-3.0-or-later. Исходники mpv: https://github.com/mpv-player/mpv; FFmpeg: https://github.com/FFmpeg/FFmpeg. Дополнительные зависимости и ссылки — в android/native/buildscripts/include/download-deps.sh.
+- CA bundle: пакет корневых сертификатов Mozilla (https://curl.se/ca/cacert.pem, MPL-2.0) для проверки TLS в нативном плеере.
+- Gradle Wrapper: Gradle, Apache-2.0, https://github.com/gradle/gradle.
+- Android Gradle Plugin: Google, Apache-2.0, https://developer.android.com/build.
+
+Android-оболочка Lampa https://github.com/lampa-app/LAMPA изучена как источник сведений о платформе. Её исходный код в этот прототип не скопирован.
+
+- AndroidX WebKit 1.12.1: Apache-2.0, https://android.googlesource.com/platform/frameworks/support/+/androidx-main/webkit/ . Адаптер AndroidJS запускается до кода страницы.
+
+- ARM32: готовые библиотеки из официального mpv-android 2026-09-17. Происхождение и хеш исходного APK — android/native/ARM32-PROVENANCE.md; исходники JNI/скрипты этого тега — android/native/arm32-upstream/.
+

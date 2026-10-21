@@ -6,6 +6,7 @@
 - Запуск: `swift run` (нужен Homebrew mpv или `LAMPA_LIBS=<каталог с dylib>`); отладка: `LAMPA_DEBUG=1 swift run`.
 - Проверки и тесты: `scripts/check.sh`, `swift test`.
 - Сборка пакета: `scripts/build-app.sh arm64|x86_64` (результат в `dist/`).
+- Android (`android/`, нужны JDK 17 и Android SDK 35 в `android/local.properties`): `cd android && ./gradlew :app:assembleDebug :app:lintDebug :app:check`; версия из `scripts/VERSION`; нативные `.so` в `android/app/src/main/jniLibs/` в git не хранятся (суммы в `android/native/SHA256SUMS.txt`).
 - Windows (на Windows): `cd windows && cargo test --release`; пакет `windows\scripts\build-windows.ps1 -Arch x64|arm64`, установщик `windows\scripts\build-installer.ps1 -Arch x64|arm64` (Inno Setup 6). С Mac проверять через виртуальную машину Windows (например, Parallels, `prlctl exec`): GUI запускается только от пользователя сессии (`--current-user`), от SYSTEM окна не видно.
 
 ## Правила
