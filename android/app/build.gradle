@@ -1,5 +1,13 @@
 plugins { id 'com.android.application' }
 
+// Подпись релиза: переменные ANDROID_KEYSTORE_FILE, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD (CI)
+// либо файл ~/.config/lampyris/android-release.properties (storeFile, storePassword, keyAlias, keyPassword). Ключ в репозиторий не попадает.
+def signingProps = new Properties()
+def signingFile = file("${System.getProperty('user.home')}/.config/lampyris/android-release.properties")
+if (signingFile.exists()) signingFile.withInputStream { signingProps.load(it) }
+def signing = { String env, String key -> System.getenv(env) ?: signingProps.getProperty(key) }
+def releaseKeystore = signing('ANDROID_KEYSTORE_FILE', 'storeFile')
+
 // Версия одна на все платформы: scripts/VERSION (X.Y.Z). versionCode = X*10000 + Y*100 + Z.
 def appVersion = file('../../scripts/VERSION').text.trim()
 def versionParts = appVersion.tokenize('.')*.toInteger()
@@ -16,6 +24,21 @@ android {
         ndk { abiFilters 'armeabi-v7a', 'arm64-v8a' }
     }
     splits { abi { enable true; reset(); include 'armeabi-v7a', 'arm64-v8a'; universalApk true } }
+    signingConfigs {
+        if (releaseKeystore) release {
+            storeFile file(releaseKeystore)
+            storePassword signing('ANDROID_KEYSTORE_PASSWORD', 'storePassword')
+            keyAlias signing('ANDROID_KEY_ALIAS', 'keyAlias')
+            keyPassword signing('ANDROID_KEY_PASSWORD', 'keyPassword')
+        }
+    }
+    buildTypes {
+        release {
+            // Без ключа получится неподписанный APK (debug-ключом release не подписывается).
+            if (releaseKeystore) signingConfig signingConfigs.release
+            minifyEnabled false
+        }
+    }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     packaging { jniLibs { useLegacyPackaging = true; keepDebugSymbols += ['**/*.so'] } }
 }

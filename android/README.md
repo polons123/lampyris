@@ -51,3 +51,7 @@ APK в `app/build/outputs/apk/debug/`: `app-armeabi-v7a-debug.apk` (ARM32), `app
 - Во время воспроизведения удерживается блокировка Wi-Fi (только пока идёт видео и не на паузе), чтобы сетевой поток не прерывался при погашенном экране.
 
 История изменений по версиям 0.1.x: [docs/android/history.md](../docs/android/history.md); разбор ревью и проверки: [docs/android/](../docs/android/).
+
+## Подпись и релиз
+
+Релизные APK подписывает CI по тегу `vX.Y.Z` (задача `android-build`): `Lampyris-<версия>-android-arm64.apk`, `-arm32.apk` и `-universal.apk` попадают в тот же релиз и в `SHA256SUMS.txt`. Ключ подписи (`android-release.jks`) в репозиторий не входит: в CI он берётся из секретов `ANDROID_KEYSTORE_B64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, локально — из `~/.config/lampyris/android-release.properties`. Потеря ключа означает, что обновить установленное приложение будет нельзя (придётся удалить и поставить заново), поэтому храните копию вне компьютера. Отпечаток сертификата (SHA-256): `88:2A:A2:40:F5:75:75:4A:BC:EF:4E:2C:D9:8B:4A:8F:CF:40:F5:89:13:57:95:3E:B2:B8:91:39:FC:32:62:53`. Локальная сборка: `./gradlew :app:assembleRelease` (без ключа получится неподписанный APK). Автообновления на Android нет: APK ставятся вручную.

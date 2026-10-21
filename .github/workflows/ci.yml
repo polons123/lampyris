@@ -149,11 +149,58 @@ jobs:
             dist/Lampyris-*-windows-arm64-setup.exe
           if-no-files-found: error
 
+  android-build:
+    name: Сборка Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Нативные библиотеки (скачиваются из релиза mpv-android, суммы проверяются)
+        working-directory: android
+        run: scripts/fetch-libs.sh
+      - name: Проверки Android (тесты, Android Lint)
+        working-directory: android
+        run: ./gradlew --no-daemon :app:assembleDebug :app:lintDebug :app:check
+      # Подписанный релиз собирается только для тегов (ключ есть только в секретах репозитория).
+      - name: Ключ подписи
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_B64" ]; then echo "Нет секрета ANDROID_KEYSTORE_B64" >&2; exit 1; fi
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/android-release.jks"
+          echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/android-release.jks" >> "$GITHUB_ENV"
+      - name: Подписанные APK
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        working-directory: android
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ./gradlew --no-daemon :app:assembleRelease
+          V="$(cat ../scripts/VERSION)"
+          mkdir -p ../dist
+          for pair in arm64-v8a:arm64 armeabi-v7a:arm32 universal:universal; do
+            cp "app/build/outputs/apk/release/app-${pair%%:*}-release.apk" "../dist/Lampyris-$V-android-${pair##*:}.apk"
+          done
+          "$ANDROID_HOME"/build-tools/*/apksigner verify --print-certs ../dist/*.apk | grep -E "SHA-256|Verified"
+      - uses: actions/upload-artifact@v4
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        with:
+          name: Lampyris-android
+          path: dist/Lampyris-*-android-*.apk
+          if-no-files-found: error
+
   release:
     name: Публикация релиза
     # Сборка arm64 для Windows может быть пропущена (если репозиторий станет приватным): остальные должны пройти.
-    if: ${{ startsWith(github.ref, 'refs/tags/v') && !cancelled() && needs.build.result == 'success' && needs.windows-build.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.windows-build-arm64.result) }}
-    needs: [build, windows-build, windows-build-arm64]
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && !cancelled() && needs.build.result == 'success' && needs.windows-build.result == 'success' && needs.android-build.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.windows-build-arm64.result) }}
+    needs: [build, windows-build, windows-build-arm64, android-build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -176,7 +223,7 @@ jobs:
           UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
         run: |
           cd dist
-          shasum -a 256 *.dmg *.zip *-setup.exe > SHA256SUMS.txt
+          shasum -a 256 *.dmg *.zip *-setup.exe *.apk > SHA256SUMS.txt
           # Приложения обновляются сами и доверяют только подписанному SHA256SUMS.txt: без ключа релиз не выпускаем.
           if [ -z "$UPDATE_SIGNING_KEY" ]; then echo "Нет секрета UPDATE_SIGNING_KEY" >&2; exit 1; fi
           umask 077
@@ -184,4 +231,4 @@ jobs:
           openssl pkeyutl -sign -inkey "$RUNNER_TEMP/update-key.pem" -rawin -in SHA256SUMS.txt -out SHA256SUMS.txt.sig
           rm -f "$RUNNER_TEMP/update-key.pem"
           [ "$(wc -c < SHA256SUMS.txt.sig)" -eq 64 ]
-          gh release create "${{ github.ref_name }}" *.dmg *.zip *-setup.exe SHA256SUMS.txt SHA256SUMS.txt.sig --repo "${{ github.repository }}" --generate-notes
+          gh release create "${{ github.ref_name }}" *.dmg *.zip *-setup.exe *.apk SHA256SUMS.txt SHA256SUMS.txt.sig --repo "${{ github.repository }}" --generate-notes
