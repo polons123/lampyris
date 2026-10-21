@@ -8,4 +8,4 @@
 - **Воспроизведение в фоне:** `PlaybackService` (уведомление с `MediaSession`, WakeLock и WifiLock только пока идёт видео).
 - **Сеть:** `OnlineFeatures` (субтитры, TheIntroDB) — только HTTPS на фиксированных хостах, `NetworkAddressPolicy` отсекает приватные адреса.
 - **Версия:** `scripts/VERSION` → `versionName`, `versionCode = X*10000 + Y*100 + Z`.
-- **Нативные библиотеки** (`jniLibs`, около 58 МБ) в git не хранятся; контрольные суммы в `android/native/SHA256SUMS.txt`, происхождение ARM32 — `android/native/ARM32-PROVENANCE.md`.
+- **Нативные библиотеки** (`jniLibs`, около 58 МБ) в git не хранятся: `android/scripts/fetch-libs.sh` скачивает их из релиза mpv-android по `android/native/libs.lock`; происхождение и суммы — `android/native/ARM32-PROVENANCE.md`, `SHA256SUMS.txt`.

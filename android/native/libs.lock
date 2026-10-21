@@ -1,0 +1,4 @@
+# Готовые библиотеки mpv и FFmpeg для Android: релиз mpv-android (https://github.com/mpv-android/mpv-android/releases).
+# Формат: <ABI> <тег релиза> <файл> <SHA-256 файла>. Из APK берутся только lib/<ABI>/*.so; суммы библиотек — в SHA256SUMS.txt.
+arm64-v8a 2026-09-17 app-default-arm64-v8a-release.apk 0b0e0a534dd6b8d2b117f06952e0600064ad97702e48bff02543e3e32107803d
+armeabi-v7a 2026-09-17 app-default-armeabi-v7a-release.apk 30c63f5528530f56cdece5d6466c749976f01bdcd8c8e67ae76e70a54b7243aa

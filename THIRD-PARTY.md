@@ -34,7 +34,7 @@
 
 - Общие скрипты плеера и профили: Lampyris, GPL-3.0-or-later, https://github.com/polons123/lampyris. Исходная локальная версия использована без изменений основного репозитория.
 - JNI и схема интеграции libmpv: mpv-android, MIT, https://github.com/mpv-android/mpv-android. Текст лицензии сохранён в android/MPV-ANDROID-LICENSE. JNI-исходники и исходные скрипты сборки включены в android/native/.
-- Готовые libmpv, FFmpeg и сопутствующие библиотеки взяты из ранее подготовленной локальной ARM64-сборки mpv-android-lampyris. Хеши файлов включены в android/native/SHA256SUMS.txt. Проект распространяет свою оболочку под GPL-3.0-or-later. Исходники mpv: https://github.com/mpv-player/mpv; FFmpeg: https://github.com/FFmpeg/FFmpeg. Дополнительные зависимости и ссылки — в android/native/buildscripts/include/download-deps.sh.
+- Готовые libmpv, FFmpeg и сопутствующие библиотеки обеих архитектур взяты без изменений из релиза mpv-android 2026-09-17 (происхождение и суммы — android/native/ARM32-PROVENANCE.md, android/native/libs.lock; скачивает их android/scripts/fetch-libs.sh). Хеши файлов — в android/native/SHA256SUMS.txt. Проект распространяет свою оболочку под GPL-3.0-or-later. Исходники mpv: https://github.com/mpv-player/mpv; FFmpeg: https://github.com/FFmpeg/FFmpeg. Дополнительные зависимости и ссылки — в android/native/buildscripts/include/download-deps.sh.
 - CA bundle: пакет корневых сертификатов Mozilla (https://curl.se/ca/cacert.pem, MPL-2.0) для проверки TLS в нативном плеере.
 - Gradle Wrapper: Gradle, Apache-2.0, https://github.com/gradle/gradle.
 - Android Gradle Plugin: Google, Apache-2.0, https://developer.android.com/build.
