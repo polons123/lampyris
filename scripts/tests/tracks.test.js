@@ -76,3 +76,9 @@ eq(studioOf("Jam session"), "JAM", "короткое слово целиком")
 eq(studioOf("Jammer"), "", "jam внутри слова не студия");
 
 if (failed) throw new Error("провалено тестов: " + failed);
+
+// Загруженные из интернета субтитры: запоминаются как online и в новой серии не сопоставляются по названию.
+const online = { type: "sub", id: 9, lang: "ru", title: "RU · Some.Release", external: true, codec: "subrip" };
+eq(subPref(online).online, true, "онлайн-субтитры помечены");
+eq(subPref({ type: "sub", id: 3, lang: "rus", title: "Full", external: true }).online, false, "внешний файл сервера не онлайн");
+eq(matchSub([online, subs[1]], subPref(online)), undefined, "онлайн-выбор в новой серии не подменяем дорожкой");

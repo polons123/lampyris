@@ -154,8 +154,12 @@
   function audioPref(t) {
     return { lang: normLang(t.lang), studio: studioOf(t.title), title: t.title || "" };
   }
+  // Субтитры, загруженные из интернета (названия «RU · …», «EN · …» задаёт applySubtitle): для следующей серии ищутся заново.
+  function isOnlineSub(t) {
+    return Boolean(t && t.external && /^(RU|EN) · /.test(String(t.title || "")));
+  }
   function subPref(t) {
-    return t ? { lang: normLang(t.lang), studio: studioOf(t.title), title: t.title || "", kind: subKind(t) } : { off: true };
+    return t ? { lang: normLang(t.lang), studio: studioOf(t.title), title: t.title || "", kind: subKind(t), online: isOnlineSub(t) } : { off: true };
   }
 
   // Подходящая озвучка среди текущих (язык, затем студия и название), либо undefined.
@@ -172,6 +176,7 @@
   function matchSub(tracks, pref) {
     if (!pref) return undefined;
     if (pref.off) return "no";
+    if (pref.online) return undefined;
     const lang = normLang(pref.lang);
     const kind = pref.kind || (pref.forced ? "forced" : "full");
     const same = tracks.filter((t) => normLang(t.lang) === lang && subKind(t) === kind);
@@ -281,7 +286,9 @@
     if (name === "mpv_sub_box") api.set("sub-back-color", value === "background-box" ? "#B0000000" : "#00000000");
   }
   const VOLUME_STEP = 0.05;
-  const BUFFER_MAX_BYTES = "512MiB";
+  // Оболочка Android задаёт window.__lampyrisTV (true для ТВ) до загрузки скрипта; на macOS и Windows его нет.
+  const ANDROID = typeof window.__lampyrisTV === "boolean";
+  const BUFFER_MAX_BYTES = ANDROID ? "128MiB" : "512MiB";
   let active = null;
 
   function whenReady(fn) {
@@ -305,8 +312,8 @@
       app_settings_mpv: { ru: "MPV", en: "MPV" },
       app_settings_mpv_online: { ru: "Использовать mpv для видео", en: "Use mpv for video" },
       app_settings_mpv_online_descr: {
-        ru: "Выключите, чтобы играть встроенным плеером WebKit. Он не воспроизводит MKV и ряд кодеков. Действует со следующего запуска видео.",
-        en: "Turn off to play with the built-in WebKit player. It cannot play MKV and some codecs. Applies from the next video.",
+        ru: "Выключите, чтобы играть встроенным плеером " + (ANDROID ? "Android WebView" : "WebKit") + ". Он не воспроизводит MKV и ряд кодеков. Действует со следующего запуска видео.",
+        en: "Turn off to play with the built-in " + (ANDROID ? "Android WebView" : "WebKit") + " player. It cannot play MKV and some codecs. Applies from the next video.",
       },
       app_settings_mpv_skip: { ru: "Пропуск заставок (TheIntroDB)", en: "Skip intros (TheIntroDB)" },
       app_settings_mpv_skip_descr: {
@@ -571,7 +578,7 @@
         border-radius:999px; ${GLASS} color:#fff; font:600 1.15em -apple-system,BlinkMacSystemFont,sans-serif;
         white-space:nowrap; pointer-events:none; opacity:0; transition:opacity .25s; }
       .mpv-toast.is-shown { opacity:1; }
-      .mpv-statpanel { position:fixed; top:4%; left:3%; z-index:125; min-width:22em; padding:1em 1.3em; border-radius:1.2em;
+      .mpv-statpanel { position:fixed; top:19%; left:3%; z-index:125; min-width:22em; padding:1em 1.3em; border-radius:1.2em;
         background:rgba(40,40,46,.3); -webkit-backdrop-filter:blur(30px) saturate(180%); backdrop-filter:blur(30px) saturate(180%);
         color:#fff; font:.95em -apple-system,BlinkMacSystemFont,sans-serif; pointer-events:none; }
       .mpv-statpanel div { display:flex; justify-content:space-between; gap:2em; padding:.15em 0; }
@@ -850,18 +857,18 @@
           `<div class="player-panel__mpvhelp button selector"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M20 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/></svg><div class="tooltip"></div></div>`
         );
         help.find(".tooltip").text(ru ? "Горячие клавиши (H)" : "Shortcuts (H)");
-        help.on("hover:enter", () => openHelp(L));
+        bindPlayerButton(help, () => openHelp(L));
         window.$(host).before(help);
         const subs = window.$(
           `<div class="player-panel__mpvsubs button selector"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M19 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zM5 12h4v2H5v-2zm9 6H5v-2h9v2zm5 0h-3v-2h3v2zm0-4h-8v-2h8v2z"/></svg><div class="tooltip"></div></div>`
         );
         subs.find(".tooltip").text(ru ? "Субтитры из интернета (U)" : "Online subtitles (U)");
-        subs.on("hover:enter", () => active && active.__subsMenu && active.__subsMenu());
+        bindPlayerButton(subs, () => active && active.__subsMenu && active.__subsMenu());
         const substyle = window.$(
           `<div class="player-panel__mpvsubstyle button selector"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M9 4v3h5v12h3V7h5V4H9zm-6 8h3v7h3v-7h3V9H3v3z"/></svg><div class="tooltip"></div></div>`
         );
         substyle.find(".tooltip").text(ru ? "Вид субтитров (Y)" : "Subtitle style (Y)");
-        substyle.on("hover:enter", () => openSubStyle(L));
+        bindPlayerButton(substyle, () => openSubStyle(L));
         // Всё про субтитры живёт слева от кнопок управления воспроизведением: выбор дорожки, поиск в интернете, вид.
         const left = window.$(".player-panel__left").first();
         if (left.length) {
@@ -879,13 +886,22 @@
           `<div class="player-panel__mpvpicture button selector"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-4.5z"/></svg><div class="tooltip"></div></div>`
         );
         picture.find(".tooltip").text(ru ? "Картинка (V)" : "Picture (V)");
-        picture.on("hover:enter", () => openPicture(L));
+        bindPlayerButton(picture, () => openPicture(L));
         window.$(host).before(picture);
+        if (ANDROID) {
+          // Без клавиатуры окно статистики открывается кнопкой.
+          const info = window.$(
+            `<div class="player-panel__mpvinfo button selector"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg><div class="tooltip"></div></div>`
+          );
+          info.find(".tooltip").text(ru ? "Информация о файле (I)" : "File information (I)");
+          bindPlayerButton(info, () => toggleStatsPanel(L));
+          window.$(host).before(info);
+        }
         if (!hasProfiles) return;
         const btn = window.$(
           `<div class="player-panel__mpvprofile button selector"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg></div>`
         );
-        btn.on("hover:enter", () => chooseProfile(L, true));
+        bindPlayerButton(btn, () => chooseProfile(L, true));
         window.$(host).before(btn);
       }, 300);
     }).catch(() => {});
@@ -1366,13 +1382,15 @@
     addUiStyle();
     const el = document.createElement("div");
     el.className = "mpv-statpanel";
+    el.addEventListener("click", closeStatsPanel);
+    if (ANDROID) el.style.pointerEvents = "auto";
     document.body.appendChild(el);
     const names = ["video-codec", "hwdec-current", "video-params", "container-fps", "estimated-vf-fps", "video-bitrate",
       "frame-drop-count", "decoder-frame-drop-count", "vo-delayed-frame-count", "avsync", "audio-codec-name", "audio-params",
       "audio-bitrate", "track-list", "cache-speed", "demuxer-cache-state", "demuxer-cache-time", "time-pos", "speed", "volume", "audio-delay", "sub-delay"];
     const ru = ruLang(L);
     const tick = async () => {
-      if (!active) return closeStatsPanel();
+      if (!active || !el.isConnected) return closeStatsPanel();
       pollTorrentStat(L);
       const vals = await Promise.all(names.map((n) => api.get(n).catch(() => null)));
       const v = Object.fromEntries(names.map((n, i) => [n, vals[i]]));
@@ -1390,7 +1408,7 @@
         [ru ? "Пропущено кадров" : "Dropped frames", (num(v["decoder-frame-drop-count"]) + " / " + num(v["frame-drop-count"]) + " / " + num(v["vo-delayed-frame-count"])) + (ru ? "  (декодер / вывод / задержано)" : "  (decoder / output / delayed)")],
         [ru ? "Рассинхрон A/V" : "A/V sync", num(v.avsync, 3) + " " + L.Lang.translate("app_settings_mpv_second")],
         [ru ? "Аудио" : "Audio", [[codecLabel(v["track-list"]), channelsLabel(aparams, v["track-list"])].filter(Boolean).join(" "), aparams.samplerate ? Math.round(aparams.samplerate / 1000 * 10) / 10 + " kHz" : null].filter(Boolean).join(" · ")],
-        [ru ? "Битрейт" : "Bitrate", num(v["video-bitrate"] / 1e6, 2) + " + " + num(v["audio-bitrate"] / 1e6, 2) + " Mbit/s"],
+        [ru ? "Битрейт" : "Bitrate", (Number(v["video-bitrate"]) > 0 ? num(v["video-bitrate"] / 1e6, 2) : "—") + " + " + (Number(v["audio-bitrate"]) > 0 ? num(v["audio-bitrate"] / 1e6, 2) : "—") + " Mbit/s"],
         [ru ? "Сеть" : "Network", networkLabel(v["cache-speed"], cache["raw-input-rate"], bufferAhead, cache.eof, ru)],
         [ru ? "Буфер вперёд" : "Buffer ahead", Number.isFinite(bufferAhead) ? num(bufferAhead, 1) + " " + L.Lang.translate("app_settings_mpv_second") : "—"],
         ...(torrentStat ? torrentRows(L, ru) : [[ru ? "Торрент" : "Torrent", [text(".player-info__values .value--speed"), text(".player-info__values .value--stat")].filter(Boolean).join(" · ")]]),
@@ -1540,6 +1558,12 @@
       if (event.key === "Escape" && document.querySelector(".mpv-statpanel")) {
         event.preventDefault();
         event.stopImmediatePropagation();
+        // Отпускание Esc тоже не должно дойти до Lampa: по нему она закрывает плеер.
+        const release = () => { clearTimeout(timer); window.removeEventListener("keyup", swallowUp, true); window.removeEventListener("keypress", swallowUp, true); };
+        const swallowUp = (e) => { e.preventDefault(); e.stopImmediatePropagation(); if (e.type === "keyup") release(); };
+        const timer = setTimeout(release, 1000);
+        window.addEventListener("keyup", swallowUp, true);
+        window.addEventListener("keypress", swallowUp, true);
         return closeStatsPanel();
       }
       const code = event.code;
@@ -1590,7 +1614,7 @@
     window.addEventListener("keydown", (event) => {
       if (!/^Arrow(Left|Right|Up|Down)$/.test(event.key) || event.metaKey || event.ctrlKey || event.altKey) return;
       if (!active || !document.documentElement.classList.contains(CLASS)) return;
-      if (event.shiftKey && /^Arrow(Up|Down)$/.test(event.key)) return;
+      if ((window.__lampyrisTV || event.shiftKey) && /^Arrow(Up|Down)$/.test(event.key)) return;
       if (document.querySelector(".mpv-conf, .mpv-pick") || document.body.classList.contains("selectbox--open")) return;
       const controller = L.Controller.enabled && L.Controller.enabled();
       if (!controller || controller.name !== "player") return;
@@ -1625,6 +1649,15 @@
     end: '<path d="M6 18l8.5-6L6 6zM16 6v12h2V6z"/>',
   };
 
+  // Кнопка панели плеера. На Android касание даёт и click, и hover:enter: один обработчик без двойного запуска.
+  function bindPlayerButton(button, action) {
+    if (!ANDROID) return void button.on("hover:enter", action);
+    let last = 0;
+    const run = () => { const now = performance.now(); if (now - last < 250) return; last = now; action(); };
+    button.on("hover:enter", run);
+    button[0].addEventListener("click", (event) => { event.preventDefault(); event.stopImmediatePropagation(); run(); }, true);
+  }
+
   function startSeekButtons(L) {
     stopSeekButtons();
     if (L.Player.playdata && L.Player.playdata() && L.Player.playdata().iptv) return;
@@ -1647,7 +1680,7 @@
           `<div class="player-panel__seekbtn button selector"><svg viewBox="0 0 24 24" fill="currentColor">${SEEK_ICONS[d.key]}</svg><div class="tooltip"></div></div>`
         );
         b.find(".tooltip").text(d.tip);
-        b.on("hover:enter", () => {
+        bindPlayerButton(b, () => {
           if (!active) return;
           if (d.step) return void seekBy(d.step * seekStep(L));
           const dur = Number(active.duration) || 0;
@@ -1655,7 +1688,12 @@
         });
         return b;
       };
-      const box = (a, b) => window.$('<div class="player-panel__box-buttons player-panel__seekbtn-box"></div>').append(make(a), make(b));
+      const box = (a, b) => {
+        const host = window.$('<div class="player-panel__box-buttons player-panel__seekbtn-box"></div>');
+        host[0].appendChild(make(a)[0]);
+        host[0].appendChild(make(b)[0]);
+        return host;
+      };
       const pp = window.$(play);
       pp.before(box(defs[0], defs[1]).css("margin-right", "0.5em"));
       pp.after(box(defs[2], defs[3]).css("margin-left", "0.5em"));
@@ -1679,7 +1717,7 @@
     }
     nativeSubsHome = null;
     document.querySelectorAll(".player-panel__mpvsubbox").forEach((n) => n.remove());
-    document.querySelectorAll(".player-panel__mpvprofile, .player-panel__mpvhelp, .player-panel__mpvsubs, .player-panel__mpvsubstyle, .player-panel__mpvpicture").forEach((n) => n.remove());
+    document.querySelectorAll(".player-panel__mpvprofile, .player-panel__mpvhelp, .player-panel__mpvsubs, .player-panel__mpvsubstyle, .player-panel__mpvpicture, .player-panel__mpvinfo").forEach((n) => n.remove());
   }
 
   // Стили окон с полем ввода (редактор mpv.conf и ввод API-ключа).
@@ -1719,7 +1757,7 @@
         <div class="mpv-conf__title"></div>
         <div class="mpv-conf__hint"></div>
         <textarea class="mpv-conf__text" spellcheck="false" autocapitalize="off" autocomplete="off"
-          placeholder="# hwdec=videotoolbox&#10;&#10;[hdr]&#10;tone-mapping=bt.2446a"></textarea>
+          placeholder="${ANDROID ? "# gamma=3&#10;&#10;[tablet]&#10;scale=bilinear&#10;deband=no" : "# hwdec=videotoolbox&#10;&#10;[hdr]&#10;tone-mapping=bt.2446a"}"></textarea>
         <div class="mpv-conf__msg"></div>
         <div class="mpv-conf__buttons">
           <button data-act="clear"></button><button data-act="cancel"></button><button data-act="save"></button>
@@ -1780,9 +1818,15 @@
   // видео и играет mpv (тюб ниже обслуживает встроенный плеер Lampa, в том числе для IPTV).
   function hideExternalMpv(L) {
     const values = L.Params && L.Params.values;
-    if (!values || !L.Params.select) return;
+    if (!L.Params || !L.Params.select || (!values && !ANDROID)) return;
     const inner = L.Lang.translate("settings_param_player_inner") + " (MPV)";
     ["player", "player_iptv", "player_torrent"].forEach((name) => {
+      // На Android внешних плееров нет совсем: остаётся один встроенный.
+      if (ANDROID) {
+        L.Params.select(name, { inner }, "inner");
+        if (L.Storage.get(name) !== "inner") L.Storage.set(name, "inner");
+        return;
+      }
       if (!values[name] || typeof values[name] !== "object") return;
       const rest = Object.assign({}, values[name]);
       delete rest.mpv;
@@ -2127,10 +2171,10 @@
       return (state.seriesKey = String(id));
     }
 
-    function remember(kind, value) {
+    function remember(kind, value, force = false) {
       // После восстановления Lampa сама «включает дорожку по умолчанию» и повторно вызывает переключатели;
       // это не выбор пользователя, поэтому запомненное не перезаписываем.
-      if (Date.now() - (state.restoredAt || 0) < 2500) return;
+      if (!force && Date.now() - (state.restoredAt || 0) < 2500) return;
       const key = seriesKey();
       if (!key) return;
       try {
@@ -2183,6 +2227,9 @@
     }
 
     function buildTracks(list) {
+      // Сразу после появления дорожек Lampa сама «включает дорожку по умолчанию» (язык из её настроек, параметр плейлиста):
+      // это не выбор пользователя, поэтому первые секунды ничего не запоминаем.
+      state.restoredAt = Date.now();
       const audio = [];
       const subs = [];
       const tracks = dropQualityVariants(Array.isArray(list) ? list : []);
@@ -2394,11 +2441,12 @@
         .map((e) => e.x);
     }
 
-    async function applySubtitle(x, lang) {
+    async function applySubtitle(x, lang, explicit = false) {
       const title = (lang === "ru" ? "RU" : "EN") + " · " + String(x.movieReleaseName || x.subtitleFileName || "OpenSubtitles").slice(0, 80);
       const r = await api.subsLoad(x.url, title, lang);
       if (!r || !r.ok) throw new Error((r && r.error) || "load failed");
       state.onlineSubTitle = title;
+      if (explicit) remember("sub", { lang, studio: "", title, kind: "full", online: true }, true);
       return title;
     }
 
@@ -2414,11 +2462,11 @@
       if (hasOnline) rows.push({ title: ru ? "Включить загруженные снова" : "Turn downloaded back on", sub: state.onlineSubTitle, value: "on" });
       const choice = await pickList(L, ru ? "Субтитры из интернета" : "Online subtitles", rows, 0);
       if (!choice) return;
-      if (choice === "off") { api.set("sid", "no"); showToast(ru ? "Субтитры выключены" : "Subtitles off"); return; }
+      if (choice === "off") { remember("sub", { off: true }, true); api.set("sid", "no"); showToast(ru ? "Субтитры выключены" : "Subtitles off"); return; }
       if (choice === "on") {
         const track = await api.get("track-list").catch(() => null);
         const found = Array.isArray(track) && track.find((t) => t.type === "sub" && t.title === state.onlineSubTitle);
-        if (found) { api.set("sid", found.id); showToast(ru ? "Субтитры включены" : "Subtitles on"); }
+        if (found) { remember("sub", subPref(found), true); api.set("sid", found.id); showToast(ru ? "Субтитры включены" : "Subtitles on"); }
         return;
       }
       showToast(ru ? "Поиск субтитров…" : "Searching subtitles…");
@@ -2433,7 +2481,7 @@
       const picked = await pickList(L, SUB_LANGS[choice].label[ru ? 0 : 1], variants, 0);
       if (!picked) return;
       try {
-        await applySubtitle(picked, choice);
+        await applySubtitle(picked, choice, true);
         showToast(ru ? "Субтитры включены" : "Subtitles on");
       } catch (e) { showToast((ru ? "Не удалось загрузить: " : "Download failed: ") + e.message); }
     }
@@ -2496,8 +2544,13 @@
     // Авто-режим: нет субтитров на выбранном языке — берём лучшие из найденных.
     async function maybeAutoSubs() {
       const mode = String(L.Storage.get(SUBS_SETTING, "manual"));
-      if (mode === "manual" || state.destroyed || state.autoSubsDone) return;
-      const lang = mode === "auto_en" ? "en" : "ru";
+      const pref = savedPref("sub");
+      // Выбор в сериале главнее: свою дорожку не подменяем; прошлый выбор загруженных субтитров ищем снова даже в ручном режиме.
+      if (pref && !pref.online) return;
+      if (pref && pref.off) return;
+      if ((mode === "manual" && !(pref && pref.online)) || state.destroyed || state.autoSubsDone) return;
+      const lang = pref && pref.online ? normLang(pref.lang) : mode === "auto_en" ? "en" : "ru";
+      if (lang !== "ru" && lang !== "en") return;
       state.autoSubsDone = true;
       const codes = lang === "ru" ? ["ru", "rus"] : ["en", "eng"];
       const track = await api.get("track-list").catch(() => null);

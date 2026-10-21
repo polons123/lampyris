@@ -219,10 +219,13 @@ fn lower_video_window(hwnd: isize) {
     }
 }
 
-/// Не даём Windows гасить дисплей и включать заставку, пока видео открыто и не на паузе.
+/// Сколько держать дисплей включённым на паузе: потом снова действуют обычные настройки сна Windows.
+const PAUSE_SLEEP_HOLD: Duration = Duration::from_secs(10 * 60);
+
+/// Не даём Windows гасить дисплей и включать заставку, пока видео открыто; на паузе не дольше PAUSE_SLEEP_HOLD.
 /// Состояние привязано к потоку, поэтому вызывается только из потока событий.
-fn update_sleep(file_active: bool, paused: bool, held: &mut bool) {
-    let need = file_active && !paused;
+fn update_sleep(file_active: bool, paused_since: Option<Instant>, held: &mut bool) {
+    let need = file_active && paused_since.map_or(true, |t| t.elapsed() < PAUSE_SLEEP_HOLD);
     if need != *held {
         unsafe { SetThreadExecutionState(if need { ES_CONTINUOUS | ES_DISPLAY_REQUIRED } else { ES_CONTINUOUS }) };
         *held = need;
@@ -236,7 +239,7 @@ struct Throttle {
 
 fn event_loop(mpv: Arc<Mpv>, hwnd: isize, closing: Arc<AtomicBool>, reset: Arc<AtomicBool>, sink: Sink) {
     let mut th = Throttle { last: HashMap::new(), pending: HashMap::new() };
-    let (mut file_active, mut paused, mut sleep_held) = (false, false, false);
+    let (mut file_active, mut paused_since, mut sleep_held) = (false, None::<Instant>, false);
     let mut last_log = String::new();
     let mut last_lower = Instant::now();
     while !closing.load(Ordering::SeqCst) {
@@ -260,6 +263,8 @@ fn event_loop(mpv: Arc<Mpv>, hwnd: isize, closing: Arc<AtomicBool>, reset: Arc<A
         }
         let ev = mpv.wait_event(0.03);
         if ev.id == mpv::EVENT_NONE {
+            // Таймаут паузы истекает без событий mpv.
+            update_sleep(file_active, paused_since, &mut sleep_held);
             continue;
         }
         let mut msg = json!({"event": ev.name});
@@ -281,18 +286,18 @@ fn event_loop(mpv: Arc<Mpv>, hwnd: isize, closing: Arc<AtomicBool>, reset: Arc<A
             }
             mpv::EVENT_START_FILE => {
                 file_active = true;
-                update_sleep(file_active, paused, &mut sleep_held);
+                update_sleep(file_active, paused_since, &mut sleep_held);
             }
             mpv::EVENT_FILE_LOADED | mpv::EVENT_VIDEO_RECONFIG => {
                 if ev.id == mpv::EVENT_FILE_LOADED {
                     file_active = true;
-                    update_sleep(file_active, paused, &mut sleep_held);
+                    update_sleep(file_active, paused_since, &mut sleep_held);
                 }
                 lower_video_window(hwnd);
             }
             mpv::EVENT_END_FILE => {
                 file_active = false;
-                update_sleep(file_active, paused, &mut sleep_held);
+                update_sleep(file_active, paused_since, &mut sleep_held);
                 if let Some((reason, error)) = ev.end_file {
                     msg["reason"] = json!(reason);
                     if let Some(e) = error {
@@ -304,8 +309,8 @@ fn event_loop(mpv: Arc<Mpv>, hwnd: isize, closing: Arc<AtomicBool>, reset: Arc<A
                 if let Some((name, data)) = ev.property {
                     if name == "pause" {
                         if let Some(flag) = data.as_bool() {
-                            paused = flag;
-                            update_sleep(file_active, paused, &mut sleep_held);
+                            paused_since = if flag { Some(Instant::now()) } else { None };
+                            update_sleep(file_active, paused_since, &mut sleep_held);
                         }
                     }
                     msg["name"] = json!(name);
@@ -328,6 +333,6 @@ fn event_loop(mpv: Arc<Mpv>, hwnd: isize, closing: Arc<AtomicBool>, reset: Arc<A
         }
         sink(msg);
     }
-    update_sleep(false, false, &mut sleep_held);
+    update_sleep(false, None, &mut sleep_held);
 }
 

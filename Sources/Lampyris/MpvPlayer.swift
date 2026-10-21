@@ -219,7 +219,7 @@ final class MpvPlayer {
                 updateSleepAssertion()
             case MPV_EVENT_END_FILE:
                 fileActive = false
-                updateSleepAssertion()
+                pauseChanged(false)
                 let e = ev.pointee.data.assumingMemoryBound(to: mpv_event_end_file.self).pointee
                 msg["reason"] = Int(e.reason.rawValue)
                 if e.error < 0 { msg["error"] = String(cString: mpv_error_string(e.error)) }
@@ -227,10 +227,7 @@ final class MpvPlayer {
                 let p = ev.pointee.data.assumingMemoryBound(to: mpv_event_property.self).pointee
                 msg["name"] = String(cString: p.name)
                 msg["data"] = propertyValue(p) ?? NSNull()
-                if msg["name"] as? String == "pause", let flag = msg["data"] as? Bool {
-                    paused = flag
-                    updateSleepAssertion()
-                }
+                if msg["name"] as? String == "pause", let flag = msg["data"] as? Bool { pauseChanged(flag) }
             default:
                 break
             }
@@ -292,14 +289,32 @@ final class MpvPlayer {
         return mpv_set_property_string(h, name, value) >= 0
     }
 
-    /// Не даём macOS гасить дисплей и включать заставку, пока видео открыто и не на паузе
+    /// Не даём macOS гасить дисплей и включать заставку, пока видео открыто; на паузе — не дольше pauseSleepHold
     /// (у mpv в нашем окне нет собственного «вывода», как у <video> в браузере).
     private var sleepAssertion: IOPMAssertionID = 0
     private var fileActive = false
-    private var paused = false
+    private var sleepExpired = false
+    private var sleepTimer: Task<Void, Never>?
+    private static let pauseSleepHold: UInt64 = 10 * 60 * 1_000_000_000
+
+    /// Пауза запускает отсчёт: через десять минут дисплею снова разрешено гаснуть; продолжение или конец файла сбрасывают его.
+    private func pauseChanged(_ paused: Bool) {
+        sleepTimer?.cancel()
+        sleepTimer = nil
+        sleepExpired = false
+        if paused {
+            sleepTimer = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: Self.pauseSleepHold)
+                guard !Task.isCancelled, let self else { return }
+                self.sleepExpired = true
+                self.updateSleepAssertion()
+            }
+        }
+        updateSleepAssertion()
+    }
 
     private func updateSleepAssertion() {
-        let need = fileActive && !paused
+        let need = fileActive && !sleepExpired
         if need, sleepAssertion == 0 {
             var id: IOPMAssertionID = 0
             let rc = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
