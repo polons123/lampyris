@@ -2,7 +2,7 @@
 
 **Русский** | [English](README.en.md)
 
-Неофициальный клиент [Lampa](https://github.com/yumata/lampa) для macOS (Apple Silicon и Intel) и Windows (x64 и arm64); версия для Android (планшеты, телефоны, ТВ-приставки, ARM32/ARM64) в разработке: [android/README.md](android/README.md). Lampa — проект своих авторов, Lampyris с ним не связан и не поддерживается им. На macOS приложение написано на Swift/AppKit с WKWebView, на Windows на Rust с WebView2; воспроизведение везде через libmpv.
+Неофициальный клиент [Lampa](https://github.com/yumata/lampa) для macOS (Apple Silicon и Intel) и Windows (x64 и arm64); версия для Android (планшеты, телефоны, ТВ-приставки, ARM32/ARM64; сейчас Preview): [android/README.md](android/README.md). Lampa — проект своих авторов, Lampyris с ним не связан и не поддерживается им. На macOS приложение написано на Swift/AppKit с WKWebView, на Windows на Rust с WebView2; воспроизведение везде через libmpv.
 
 ## Почему Lampyris
 - **Настоящий плеер mpv вместо плеера в браузере.** Аппаратное декодирование (VideoToolbox на macOS, D3D11VA на Windows), AC3/DTS и 4K/HDR без перекодирования и без «тормозов» веб-плеера.
@@ -27,6 +27,9 @@
 Две сборки (обе требуют macOS 13 или новее): `Lampyris-<версия>-arm64` для Mac с Apple Silicon и `Lampyris-<версия>-intel` для Mac с процессором Intel. Откройте .dmg и перетащите Lampyris в «Программы».
 
 Сборка подписана ad-hoc (без сертификата разработчика Apple), поэтому при первом запуске macOS может написать, что не может проверить приложение. Откройте «Системные настройки → Конфиденциальность и безопасность» и нажмите «Всё равно открыть», либо выполните в Терминале `xattr -dr com.apple.quarantine /Applications/Lampyris.app`.
+
+### Android (Preview)
+`Lampyris-<версия>-android-arm64.apk` (большинство современных устройств), `…-arm32.apk` (старые и ТВ-приставки с 32-битной системой) или `…-universal.apk` (обе архитектуры). Android 8.0 и новее. Установите APK вручную (разрешите установку из этого источника), откройте Lampyris и введите адрес сервера Lampa. Автообновления на Android пока нет. Подробности, ограничения и что не проверено: [android/README.md](android/README.md).
 
 ### Windows
 Установщик `Lampyris-<версия>-windows-x64-setup.exe` или `-arm64-setup.exe` (ставит для текущего пользователя без прав администратора, добавляет ярлык в меню «Пуск», удаляется через «Приложения») либо портативный `…-windows-<arch>.zip`: распакуйте в любую папку и запустите `Lampyris.exe` (нужен WebView2 Runtime, он есть в Windows 11 и в обновлённой Windows 10). Сборки не подписаны, поэтому SmartScreen может предупредить: «Подробнее» → «Выполнить в любом случае». 
