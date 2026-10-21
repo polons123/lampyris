@@ -17,7 +17,8 @@ use tao::event_loop::EventLoopProxy;
 const ALLOWED_COMMANDS: &[&str] = &["seek", "stop"];
 const ALLOWED_SET_PROPERTIES: &[&str] = &[
     "aid", "sid", "vid", "mute", "pause", "speed", "volume", "audio-delay", "sub-delay", "sub-scale", "sub-pos",
-    "sub-color", "sub-border-style", "sub-back-color", "gamma", "brightness", "contrast", "saturation",
+    "sub-color", "sub-border-style", "sub-back-color", "sub-border-size", "sub-shadow-offset", "sub-font", "sub-margin-y",
+    "gamma", "brightness", "contrast", "saturation",
 ];
 const ALLOWED_OPEN_OPTIONS: &[&str] = &["sid", "demuxer-readahead-secs", "demuxer-max-bytes"];
 /// Свойства, которые странице разрешено читать (всё, что использует mpvTube.js и playbackCover.js).
@@ -26,6 +27,7 @@ const ALLOWED_GET_PROPERTIES: &[&str] = &[
     "audio-params", "container-fps", "estimated-vf-fps", "video-bitrate", "audio-bitrate", "video-codec",
     "audio-codec-name", "hwdec-current", "frame-drop-count", "decoder-frame-drop-count", "vo-delayed-frame-count",
     "avsync", "demuxer-cache-state", "demuxer-cache-time", "gamma", "brightness", "contrast", "saturation",
+    "cache-speed", "chapter-list",
 ];
 /// Потолок размера ответов внешних сервисов (TheIntroDB, субтитры).
 const MAX_RESPONSE_BYTES: usize = 2_000_000;

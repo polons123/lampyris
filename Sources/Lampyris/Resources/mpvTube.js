@@ -25,6 +25,215 @@
     setConfig: (text) => call("setConfig", text),
   };
 
+  // @pure-begin
+  // Чистая логика дорожек (без DOM и без моста): подписи, сопоставление запомненного выбора, порядок предпочтений.
+  // Проверяется scripts/test-js.sh: этот блок вырезается по маркерам и запускается в jsc.
+  const LANG3 = { rus: "ru", eng: "en", ukr: "uk", bel: "be", jpn: "ja", deu: "de", ger: "de", fra: "fr", fre: "fr", spa: "es", ita: "it",
+    kor: "ko", zho: "zh", chi: "zh", por: "pt", pol: "pl", tur: "tr", ces: "cs", cze: "cs", swe: "sv", nld: "nl", dut: "nl", hin: "hi" };
+  function normLang(code) {
+    const raw = String(code || "").trim().toLowerCase().split(/[-_]/)[0];
+    if (!raw || raw === "und" || raw === "unk" || raw === "mis" || raw === "zxx") return "";
+    return LANG3[raw] || raw;
+  }
+
+  // Студии озвучки: [название, подстроки без пробелов и знаков, короткие слова целиком].
+  const STUDIOS = [
+    // Сериальные студии и фанатские группы.
+    ["LostFilm", ["lostfilm", "лостфильм"], ["lf"]],
+    ["NewStudio", ["newstudio", "ньюстудио"], ["ns"]],
+    ["Кубик в Кубе", ["кубикв", "kubikv", "kubik"], []],
+    ["HDRezka Studio", ["hdrezka", "rezkastudio"], []],
+    ["Jaskier", ["jaskier", "яскер"], []],
+    ["Baibako", ["baibako", "байбако"], []],
+    ["NovaFilm", ["novafilm", "новафильм"], []],
+    ["ColdFilm", ["coldfilm", "колдфильм"], []],
+    ["AlexFilm", ["alexfilm", "алексфильм"], []],
+    ["Kerob", ["kerob", "кероб"], []],
+    ["TVShows", ["tvshows"], []],
+    ["Gears Media", ["gearsmedia"], []],
+    ["Good People", ["goodpeople"], []],
+    ["Кураж-Бамбей", ["куражбамбей", "kurazhbambey"], []],
+    ["Пифагор", ["пифагор", "pifagor"], []],
+    ["Amedia", ["amedia", "амедиа"], []],
+    ["SDI Media", ["sdimedia"], []],
+    ["Paramount Comedy", ["paramountcomedy"], []],
+    // Дубляжи и озвучки кинопрокатных и телестудий.
+    ["Мосфильм-Мастер", ["мосфильммастер", "mosfilmmaster"], []],
+    ["Невафильм", ["невафильм", "nevafilm"], []],
+    ["Союз Видео", ["союзвидео", "soyuzvideo"], []],
+    ["Селена Интернешнл", ["селена", "selena"], []],
+    ["Варус Видео", ["варусвидео", "varusvideo"], []],
+    ["Studio Band", ["studioband"], []],
+    ["Первый канал", ["первыйканал", "1tv"], []],
+    ["РЕН ТВ", ["рентв", "rentv"], []],
+    ["ТВ-3", ["тв3"], []],
+    ["СТС", [], ["стс", "sts"]],
+    ["ТНТ", [], ["тнт", "tnt"]],
+    // Аниме-группы.
+    ["AniLibria", ["anilibria", "анилибрия"], []],
+    ["AniDub", ["anidub", "анидаб"], []],
+    ["SovetRomantica", ["sovetromantica", "советромантика"], []],
+    ["Shiza Project", ["shiza", "шиза"], []],
+    ["AniStar", ["anistar", "анистар"], []],
+    ["Dream Cast", ["dreamcast"], []],
+    ["Persona99", ["persona99"], []],
+    ["Reanimedia", ["reanimedia"], []],
+    ["JAM", [], ["jam"]],
+    // Платформы и стриминги.
+    ["Netflix", ["netflix", "нетфликс"], ["nf"]],
+    ["Amazon", ["amazon", "амазон"], []],
+    ["Disney+", ["disney", "дисней"], []],
+    ["Apple TV+", ["appletv"], []],
+    ["HBO", ["hbo"], []],
+    ["Кинопоиск", ["кинопоиск", "kinopoisk"], []],
+    ["Okko", ["okko", "окко"], []],
+    ["ivi", ["иви"], ["ivi"]],
+    ["Premier", ["premier", "премьер"], []],
+    ["Wink", ["wink"], []],
+    ["Crunchyroll", ["crunchyroll", "кранчиролл"], []],
+    ["Wakanim", ["wakanim"], []],
+  ];
+
+
+  // Студия по названию дорожки ("" — не узнана).
+  function studioOf(title) {
+    const words = String(title || "").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    const flat = words.join("");
+    for (const [name, subs, shorts] of STUDIOS) {
+      if (subs.some((s) => flat.includes(s)) || shorts.some((s) => words.includes(s))) return name;
+    }
+    return "";
+  }
+
+  const AUDIO_CODECS = { ac3: "AC3", eac3: "E-AC3", dts: "DTS", truehd: "TrueHD", aac: "AAC", opus: "Opus", flac: "FLAC", mp3: "MP3", vorbis: "Vorbis", pcm_s16le: "PCM", pcm_s24le: "PCM" };
+  function channelsText(t) {
+    const n = Number(t["demux-channel-count"]);
+    if (!(n > 0)) return String(t["demux-channels"] || "");
+    return { 1: "1.0", 2: "2.0", 3: "2.1", 6: "5.1", 7: "6.1", 8: "7.1" }[n] || n + "ch";
+  }
+
+  // Название озвучки: студия, иначе название дорожки без повтора языка.
+  function trackName(t, language) {
+    const title = String(t.title || "").trim();
+    if (!title) return "";
+    const studio = studioOf(title);
+    if (studio) return studio;
+    return title.toLowerCase() === String(language || "").toLowerCase() ? "" : title;
+  }
+
+  // Подпись звуковой дорожки (язык показывается отдельно): «студия · кодек каналы».
+  function audioLabel(t, language) {
+    const codec = AUDIO_CODECS[String(t.codec || "").toLowerCase()] || String(t.codec || "").toUpperCase();
+    const tech = [codec, channelsText(t)].filter(Boolean).join(" ");
+    return [trackName(t, language), tech].filter(Boolean).join(" · ");
+  }
+
+  const GRAPHIC_SUBS = /^(dvd_subtitle|dvb_subtitle|hdmv_pgs_subtitle|dvb_teletext|xsub|vobsub)$/i;
+  // Тип субтитров: forced, sdh или full (флаги mpv или слова в названии).
+  function subKind(t) {
+    const title = String(t.title || "");
+    if (t.forced || /forced|форс/i.test(title)) return "forced";
+    if (t["hearing-impaired"] || /\bsdh\b|\bcc\b|hearing|для\s*глухих/i.test(title)) return "sdh";
+    return "full";
+  }
+
+  // Подпись субтитров: «название · тип · графические · внешние».
+  function subLabel(t, language, ru) {
+    const kind = subKind(t);
+    const names = { forced: ru ? "Форсированные" : "Forced", sdh: "SDH", full: ru ? "Полные" : "Full" };
+    // Слова о типе из названия не повторяем.
+    let title = trackName(t, language).replace(/forced|форсированные|форс\.?|full|полные|\bsdh\b|\bcc\b/gi, "").replace(/[\s·,()\-–—]+/g, " ").trim();
+    if (title.toLowerCase() === String(language || "").toLowerCase()) title = "";
+    const parts = [title, names[kind]];
+    if (GRAPHIC_SUBS.test(String(t.codec || ""))) parts.push(ru ? "Графические" : "Graphic");
+    if (t.external) parts.push(ru ? "Внешние" : "External");
+    return parts.filter(Boolean).join(" · ");
+  }
+
+  // Отпечатки выбранных дорожек для запоминания.
+  function audioPref(t) {
+    return { lang: normLang(t.lang), studio: studioOf(t.title), title: t.title || "" };
+  }
+  function subPref(t) {
+    return t ? { lang: normLang(t.lang), studio: studioOf(t.title), title: t.title || "", kind: subKind(t) } : { off: true };
+  }
+
+  // Подходящая озвучка среди текущих (язык, затем студия и название), либо undefined.
+  function matchAudio(tracks, pref) {
+    if (!pref) return undefined;
+    const lang = normLang(pref.lang);
+    const same = tracks.filter((t) => normLang(t.lang) === lang);
+    const found = (pref.studio && same.find((t) => studioOf(t.title) === pref.studio)) ||
+      same.find((t) => (t.title || "") === (pref.title || "")) || same[0];
+    return found ? found.id : undefined;
+  }
+
+  // Субтитры: "no" для «отключено», иначе дорожка с тем же языком и типом; другой тип не подменяем.
+  function matchSub(tracks, pref) {
+    if (!pref) return undefined;
+    if (pref.off) return "no";
+    const lang = normLang(pref.lang);
+    const kind = pref.kind || (pref.forced ? "forced" : "full");
+    const same = tracks.filter((t) => normLang(t.lang) === lang && subKind(t) === kind);
+    const found = (pref.studio && same.find((t) => studioOf(t.title) === pref.studio)) ||
+      same.find((t) => (t.title || "") === (pref.title || "")) || same[0];
+    return found ? found.id : undefined;
+  }
+
+  // Порядок предпочтений «ru/LostFilm, ru, en»: побеждает первая подошедшая запись.
+  function parseOrder(text) {
+    return String(text || "").split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean).map((s) => {
+      const [lang, ...rest] = s.split("/");
+      return { lang: normLang(lang), studio: rest.join("/").trim().toLowerCase() };
+    }).filter((e) => e.lang);
+  }
+  function pickByOrder(tracks, text) {
+    for (const e of parseOrder(text)) {
+      const same = tracks.filter((t) => normLang(t.lang) === e.lang);
+      const hit = e.studio
+        ? same.find((t) => studioOf(t.title).toLowerCase() === e.studio || String(t.title || "").toLowerCase().includes(e.studio))
+        : same.find((t) => subKind(t) === "full") || same[0];
+      if (hit) return hit.id;
+    }
+    return undefined;
+  }
+
+  // Умный выбор субтитров: звук на языке пользователя — субтитры выключены, иначе полные (затем форсированные, SDH) на его языке.
+  function smartSubs(tracks, audio, lang) {
+    lang = normLang(lang);
+    if (!lang || !audio) return undefined;
+    if (normLang(audio.lang) === lang) return "no";
+    const mine = tracks.filter((t) => normLang(t.lang) === lang);
+    for (const kind of ["full", "forced", "sdh"]) {
+      const hit = mine.find((t) => subKind(t) === kind && !GRAPHIC_SUBS.test(String(t.codec || ""))) || mine.find((t) => subKind(t) === kind);
+      if (hit) return hit.id;
+    }
+    return undefined;
+  }
+
+  // Скорость сети для окна статистики: cache-speed (байт/с, mpv сам усредняет), иначе мгновенная raw-input-rate.
+  // Нулевая скорость при уже набранном буфере — не обрыв, а «буфер заполнен» (mpv перестал читать); без данных — прочерк.
+  function networkLabel(cacheSpeed, rawRate, bufferAhead, eof, ru) {
+    const speed = [cacheSpeed, rawRate].map(Number).find((x) => Number.isFinite(x) && x > 0);
+    if (speed) return (speed * 8 / 1e6).toFixed(2) + " Mbit/s";
+    if (eof) return ru ? "файл загружен" : "file loaded";
+    if (Number.isFinite(bufferAhead) && bufferAhead > 1) return ru ? "буфер заполнен" : "buffer full";
+    return "—";
+  }
+
+  // Глава для перехода: вперёд — следующая; назад — начало текущей, а если с её начала прошло меньше 3 с, то предыдущей.
+  // Возвращает {index, time} или undefined, когда идти некуда.
+  function chapterTarget(chapters, t, dir) {
+    if (!Array.isArray(chapters) || !chapters.length) return undefined;
+    let cur = -1;
+    chapters.forEach((c, i) => { if (Number(c.time) <= t + 0.3) cur = i; });
+    if (dir > 0) return cur + 1 < chapters.length ? { index: cur + 1, time: Number(chapters[cur + 1].time) } : undefined;
+    if (cur < 0) return undefined;
+    const idx = t - Number(chapters[cur].time) > 3 || cur === 0 ? cur : cur - 1;
+    return { index: idx, time: Number(chapters[idx].time) };
+  }
+  // @pure-end
+
   const CLASS = "mpv-active";
   const COMPONENT = "mpv_settings";
   const ONLINE_SETTING = "mpv_online_enabled";
@@ -34,13 +243,43 @@
   const SEEK_SETTING = "mpv_seek_step";
   const SKIP_SETTING = "mpv_skip_mode";
   const SUBS_SETTING = "mpv_online_subs";
+  const SMART_SUBS_SETTING = "mpv_smart_subs";
+  const AUDIO_ORDER = "mpv_audio_order";
+  const SUB_ORDER = "mpv_sub_order";
   // Вид субтитров в mpv (настройки субтитров самой Lampa относятся к HTML5-плееру и на mpv не действуют).
-  const SUB_STYLE = {
-    mpv_sub_size: { property: "sub-scale", def: "1" },
-    mpv_sub_pos: { property: "sub-pos", def: "100" },
-    mpv_sub_color: { property: "sub-color", def: "#FFFFFF" },
-    mpv_sub_box: { property: "sub-border-style", def: "outline-and-shadow" },
-  };
+  // Один список на «Настройки → MPV» и окно субтитров в плеере (клавиша Y): оба пишут в одни ключи mpv_sub_*.
+  const SUB_CHOICES = [
+    { name: "mpv_sub_size", title: "app_settings_mpv_substyle_size", property: "sub-scale", def: "1",
+      values: ["0.7", "0.85", "1", "1.25", "1.5", "2"],
+      ru: ["Мелкий", "Меньше", "Обычный", "Крупный", "Очень крупный", "Огромный"], en: ["Small", "Smaller", "Normal", "Large", "Very large", "Huge"] },
+    { name: "mpv_sub_pos", title: "app_settings_mpv_substyle_pos", property: "sub-pos", def: "100",
+      values: ["100", "95", "90", "85"],
+      ru: ["Внизу", "Чуть выше", "Выше", "Высоко"], en: ["Bottom", "A bit higher", "Higher", "High"] },
+    { name: "mpv_sub_color", title: "app_settings_mpv_substyle_color", property: "sub-color", def: "#FFFFFF",
+      values: ["#FFFFFF", "#FFFF00", "#00FFFF"],
+      ru: ["Белый", "Жёлтый", "Голубой"], en: ["White", "Yellow", "Cyan"] },
+    { name: "mpv_sub_box", title: "app_settings_mpv_substyle_box", property: "sub-border-style", def: "outline-and-shadow",
+      values: ["outline-and-shadow", "background-box"],
+      ru: ["Обводка", "Плашка"], en: ["Outline", "Box"] },
+    { name: "mpv_sub_border", title: "app_settings_mpv_substyle_border", property: "sub-border-size", def: "3",
+      values: ["0", "1.5", "3", "4.5", "6"],
+      ru: ["Без обводки", "Тонкая", "Обычная", "Толстая", "Очень толстая"], en: ["None", "Thin", "Normal", "Thick", "Very thick"] },
+    { name: "mpv_sub_shadow", title: "app_settings_mpv_substyle_shadow", property: "sub-shadow-offset", def: "0",
+      values: ["0", "1", "2", "4"],
+      ru: ["Без тени", "Лёгкая", "Средняя", "Глубокая"], en: ["None", "Light", "Medium", "Deep"] },
+    { name: "mpv_sub_font", title: "app_settings_mpv_substyle_font", property: "sub-font", def: "sans-serif",
+      values: ["sans-serif", "Arial", "Verdana", "Georgia", "Courier New"],
+      ru: ["Системный", "Arial", "Verdana", "Georgia", "Courier New"], en: ["System", "Arial", "Verdana", "Georgia", "Courier New"] },
+    { name: "mpv_sub_margin", title: "app_settings_mpv_substyle_margin", property: "sub-margin-y", def: "22",
+      values: ["22", "40", "60", "90"],
+      ru: ["Обычный", "Больше", "Большой", "Очень большой"], en: ["Normal", "More", "Large", "Very large"] },
+  ];
+  const SUB_STYLE = Object.fromEntries(SUB_CHOICES.map((c) => [c.name, { property: c.property, def: c.def }]));
+  // Ставит одно свойство вида субтитров (плашка ещё меняет цвет подложки).
+  function applySubStyleValue(name, value) {
+    api.set(SUB_STYLE[name].property, value);
+    if (name === "mpv_sub_box") api.set("sub-back-color", value === "background-box" ? "#B0000000" : "#00000000");
+  }
   const VOLUME_STEP = 0.05;
   const BUFFER_MAX_BYTES = "512MiB";
   let active = null;
@@ -78,6 +317,10 @@
       app_settings_mpv_substyle_pos: { ru: "Субтитры: положение", en: "Subtitles: position" },
       app_settings_mpv_substyle_color: { ru: "Субтитры: цвет текста", en: "Subtitles: text color" },
       app_settings_mpv_substyle_box: { ru: "Субтитры: фон", en: "Subtitles: background" },
+      app_settings_mpv_substyle_border: { ru: "Субтитры: обводка", en: "Subtitles: outline" },
+      app_settings_mpv_substyle_shadow: { ru: "Субтитры: тень", en: "Subtitles: shadow" },
+      app_settings_mpv_substyle_font: { ru: "Субтитры: шрифт", en: "Subtitles: font" },
+      app_settings_mpv_substyle_margin: { ru: "Субтитры: отступ снизу", en: "Subtitles: bottom margin" },
       app_settings_mpv_substyle_descr: {
         ru: "Относится к субтитрам, которые рисует mpv. Действует со следующего видео; опции из mpv.conf важнее.",
         en: "Applies to subtitles drawn by mpv. Takes effect from the next video; options from mpv.conf take priority.",
@@ -86,6 +329,24 @@
       app_settings_mpv_subs_descr: {
         ru: "Поиск субтитров (OpenSubtitles через Stremio, без ключа) для видео без них. «По запросу» — из меню плеера или клавишей U; «Авто» — сам найти и включить, если в видео нет субтитров на этом языке.",
         en: "Subtitle search (OpenSubtitles through Stremio, no key) for videos without them. Manual: from the player menu or the U key; Auto: find and enable on its own when the video has no subtitles in that language.",
+      },
+      app_settings_mpv_smart: { ru: "Умный выбор субтитров", en: "Smart subtitle choice" },
+      app_settings_mpv_smart_descr: {
+        ru: "Для нового сериала или фильма: если звук на другом языке, включить субтитры выбранного языка (полные, иначе форсированные); если звук на этом языке, выключить. Явный выбор в сериале важнее.",
+        en: "For a new series or film: if the audio is in another language, turn on subtitles in the chosen language (full, else forced); if the audio is in that language, turn them off. A choice you made in a series wins.",
+      },
+      app_settings_mpv_smart_off: { ru: "Выключен", en: "Off" },
+      app_settings_mpv_smart_ru: { ru: "Для русского", en: "For Russian" },
+      app_settings_mpv_smart_en: { ru: "Для English", en: "For English" },
+      app_settings_mpv_audio_order: { ru: "Порядок озвучек", en: "Audio preference order" },
+      app_settings_mpv_audio_order_descr: {
+        ru: "Для нового сериала или фильма: языки и студии через запятую, например «ru/LostFilm, ru, en». Побеждает первая подошедшая запись.",
+        en: "For a new series or film: languages and studios, comma separated, for example “ru/LostFilm, ru, en”. The first matching entry wins.",
+      },
+      app_settings_mpv_sub_order: { ru: "Порядок субтитров", en: "Subtitle preference order" },
+      app_settings_mpv_sub_order_descr: {
+        ru: "То же для субтитров, например «ru, en». Если заполнено, заменяет умный выбор.",
+        en: "The same for subtitles, for example “ru, en”. When filled, it replaces the smart choice.",
       },
       app_settings_mpv_subs_manual: { ru: "По запросу", en: "On request" },
       app_settings_mpv_subs_auto_ru: { ru: "Авто: русские", en: "Auto: Russian" },
@@ -202,25 +463,37 @@
         description: L.Lang.translate("app_settings_mpv_subs_descr"),
       },
     });
+    L.SettingsApi.addParam({
+      component: COMPONENT,
+      param: {
+        name: SMART_SUBS_SETTING,
+        type: "select",
+        values: { off: L.Lang.translate("app_settings_mpv_smart_off"), ru: L.Lang.translate("app_settings_mpv_smart_ru"), en: L.Lang.translate("app_settings_mpv_smart_en") },
+        default: "off",
+      },
+      field: {
+        name: L.Lang.translate("app_settings_mpv_smart"),
+        description: L.Lang.translate("app_settings_mpv_smart_descr"),
+      },
+    });
+    [[AUDIO_ORDER, "audio_order", "ru/LostFilm, ru, en"], [SUB_ORDER, "sub_order", "ru, en"]].forEach(([name, key, placeholder]) => {
+      L.SettingsApi.addParam({
+        component: COMPONENT,
+        param: { name, type: "input", values: "", placeholder, default: "" },
+        field: {
+          name: L.Lang.translate("app_settings_mpv_" + key),
+          description: L.Lang.translate("app_settings_mpv_" + key + "_descr"),
+        },
+      });
+    });
     {
       const lang = String(L.Storage.get("language", "ru")) === "ru" ? "ru" : "en";
-      const names = (key) => L.Lang.translate(key);
-      const pick = (arr) => arr[lang];
-      const sizes = pick({ ru: ["Мелкий", "Меньше", "Обычный", "Крупный", "Очень крупный", "Огромный"], en: ["Small", "Smaller", "Normal", "Large", "Very large", "Huge"] });
-      const poss = pick({ ru: ["Внизу", "Чуть выше", "Выше", "Высоко"], en: ["Bottom", "A bit higher", "Higher", "High"] });
-      const colors = pick({ ru: ["Белый", "Жёлтый", "Голубой"], en: ["White", "Yellow", "Cyan"] });
-      const boxes = pick({ ru: ["Обводка", "Плашка"], en: ["Outline", "Box"] });
-      const defs = [
-        ["mpv_sub_size", "app_settings_mpv_substyle_size", { "0.7": sizes[0], "0.85": sizes[1], "1": sizes[2], "1.25": sizes[3], "1.5": sizes[4], "2": sizes[5] }, "1"],
-        ["mpv_sub_pos", "app_settings_mpv_substyle_pos", { "100": poss[0], "95": poss[1], "90": poss[2], "85": poss[3] }, "100"],
-        ["mpv_sub_color", "app_settings_mpv_substyle_color", { "#FFFFFF": colors[0], "#FFFF00": colors[1], "#00FFFF": colors[2] }, "#FFFFFF"],
-        ["mpv_sub_box", "app_settings_mpv_substyle_box", { "outline-and-shadow": boxes[0], "background-box": boxes[1] }, "outline-and-shadow"],
-      ];
-      defs.forEach(([name, title, values, def]) => {
+      SUB_CHOICES.forEach((c) => {
+        const values = Object.fromEntries(c.values.map((v, i) => [v, c[lang][i]]));
         L.SettingsApi.addParam({
           component: COMPONENT,
-          param: { name, type: "select", values, default: def },
-          field: { name: names(title), description: names("app_settings_mpv_substyle_descr") },
+          param: { name: c.name, type: "select", values, default: c.def },
+          field: { name: L.Lang.translate(c.title), description: L.Lang.translate("app_settings_mpv_substyle_descr") },
         });
       });
     }
@@ -338,7 +611,13 @@
       .mpv-pic__dot { position:absolute; top:.15em; left:.15em; width:1em; height:1em; border-radius:50%; background:#fff;
         box-shadow:0 0 4px rgba(0,0,0,.5); transition:left .15s, background-color .15s; }
       .mpv-pic__switch.on .mpv-pic__dot { left:1.45em; background:#000; }
-      .mpv-pic .mpv-pick__hint { font-size:.75em; }`;
+      .mpv-pic .mpv-pick__hint { font-size:.75em; }
+      .mpv-chapters { position:absolute; inset:0; pointer-events:none; }
+      .mpv-chapter-mark { position:absolute; top:0; bottom:0; width:2px; margin-left:-1px; background:rgba(255,255,255,.75); }
+      .mpv-subst { align-items:flex-start; padding-top:3em; }
+      .mpv-subst .mpv-pic__row { grid-template-columns:1fr auto; }
+      .mpv-subpreview { position:fixed; left:50%; transform:translateX(-50%); z-index:124; padding:.1em .5em; text-align:center;
+        white-space:nowrap; font-weight:700; pointer-events:none; }`;
     document.head.appendChild(style);
   }
 
@@ -554,6 +833,7 @@
 
   // Кнопка «Профиль mpv» на панели плеера, пока играет mpv.
   let profileButtonTimer = null;
+  let nativeSubsHome = null;
   function startProfileButton(L) {
     stopProfileButton();
     api.getConfig().then((info) => {
@@ -577,7 +857,30 @@
         );
         subs.find(".tooltip").text(ru ? "Субтитры из интернета (U)" : "Online subtitles (U)");
         subs.on("hover:enter", () => active && active.__subsMenu && active.__subsMenu());
-        window.$(host).before(subs);
+        const substyle = window.$(
+          `<div class="player-panel__mpvsubstyle button selector"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M9 4v3h5v12h3V7h5V4H9zm-6 8h3v7h3v-7h3V9H3v3z"/></svg><div class="tooltip"></div></div>`
+        );
+        substyle.find(".tooltip").text(ru ? "Вид субтитров (Y)" : "Subtitle style (Y)");
+        substyle.on("hover:enter", () => openSubStyle(L));
+        // Всё про субтитры живёт слева от кнопок управления воспроизведением: выбор дорожки, поиск в интернете, вид.
+        const left = window.$(".player-panel__left").first();
+        if (left.length) {
+          const box = window.$('<div class="player-panel__box-buttons player-panel__mpvsubbox"></div>');
+          const native = window.$(".player-panel__subs").first();
+          if (native.length) { nativeSubsHome = { parent: native.parent(), next: native.next() }; box.append(native); }
+          box.append(subs);
+          box.append(substyle);
+          left.append(box);
+        } else {
+          window.$(host).before(subs);
+          window.$(host).before(substyle);
+        }
+        const picture = window.$(
+          `<div class="player-panel__mpvpicture button selector"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M21 19V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2zM8.5 13.5l2.5 3 3.5-4.5 4.5 6H5l3.5-4.5z"/></svg><div class="tooltip"></div></div>`
+        );
+        picture.find(".tooltip").text(ru ? "Картинка (V)" : "Picture (V)");
+        picture.on("hover:enter", () => openPicture(L));
+        window.$(host).before(picture);
         if (!hasProfiles) return;
         const btn = window.$(
           `<div class="player-panel__mpvprofile button selector"><svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg></div>`
@@ -856,6 +1159,136 @@
     focus(0);
   }
 
+  // ---- Окно «Субтитры» (клавиша Y, кнопка на панели): вид и режим онлайн-поиска ----
+  // Пишет в те же ключи mpv_sub_* и mpv_online_subs, что и «Настройки → MPV»; изменения видны сразу,
+  // а пример субтитра поверх видео показывает, как они будут выглядеть (приблизительно: рисует страница, не mpv).
+  function openSubStyle(L) {
+    if (document.querySelector(".mpv-pick")) return;
+    // Закрывается вместе с видео, как панель «Картинка».
+    addUiStyle();
+    const ru = ruLang(L);
+    const current = (c) => {
+      const v = String(L.Storage.get(c.name, c.def) || c.def);
+      return Math.max(0, c.values.indexOf(v));
+    };
+    const onlineValues = ["manual", "auto_ru", "auto_en"];
+    const online = () => Math.max(0, onlineValues.indexOf(String(L.Storage.get(SUBS_SETTING, "manual"))));
+    const defs = SUB_CHOICES.map((c) => ({
+      label: L.Lang.translate(c.title).replace(/^[^:]+:\s*/, "").replace(/^./, (ch) => ch.toUpperCase()),
+      count: c.values.length,
+      index: () => current(c),
+      text: (i) => c[ru ? "ru" : "en"][i],
+      set: (i) => {
+        L.Storage.set(c.name, c.values[i]);
+        applySubStyleValue(c.name, c.values[i]);
+      },
+      reset: () => { L.Storage.set(c.name, c.def); applySubStyleValue(c.name, c.def); },
+    }));
+    defs.push({
+      label: ru ? "Поиск в интернете" : "Online search",
+      count: onlineValues.length,
+      index: online,
+      text: (i) => L.Lang.translate("app_settings_mpv_subs_" + onlineValues[i]),
+      set: (i) => L.Storage.set(SUBS_SETTING, onlineValues[i]),
+      reset: () => L.Storage.set(SUBS_SETTING, "manual"),
+    });
+
+    const overlay = document.createElement("div");
+    overlay.className = "mpv-pick mpv-pic mpv-subst";
+    overlay.innerHTML = '<div class="mpv-pick__box"><div class="mpv-pick__title"></div><div class="mpv-pick__list"></div><div class="mpv-pick__hint"></div></div>';
+    overlay.querySelector(".mpv-pick__title").textContent = ru ? "Субтитры" : "Subtitles";
+    overlay.querySelector(".mpv-pick__hint").textContent = ru
+      ? "↑ ↓ выбор · ← → изменить · R — сброс · Esc"
+      : "↑ ↓ select · ← → change · R — reset · Esc";
+    const list = overlay.querySelector(".mpv-pick__list");
+    const preview = document.createElement("div");
+    preview.className = "mpv-subpreview";
+    preview.textContent = ru ? "Пример субтитра" : "Sample subtitle";
+
+    // Размеры mpv заданы для кадра высотой 720: пересчитываем на высоту окна.
+    function paintPreview() {
+      const get = (n) => String(L.Storage.get(n, SUB_STYLE[n].def) || SUB_STYLE[n].def);
+      const k = window.innerHeight / 720;
+      const box = get("mpv_sub_box") === "background-box";
+      const border = Number(get("mpv_sub_border")) * k;
+      const shadow = Number(get("mpv_sub_shadow")) * k;
+      const st = preview.style;
+      st.fontSize = 55 * Number(get("mpv_sub_size")) * k + "px";
+      st.bottom = (100 - Number(get("mpv_sub_pos"))) / 100 * window.innerHeight + Number(get("mpv_sub_margin")) * k + "px";
+      st.color = get("mpv_sub_color");
+      st.fontFamily = get("mpv_sub_font") + ", sans-serif";
+      st.background = box ? "rgba(0,0,0,.69)" : "none";
+      st.webkitTextStroke = box ? "0" : border * 2 + "px #000";
+      st.paintOrder = "stroke fill";
+      st.textShadow = shadow ? `${shadow}px ${shadow}px 0 rgba(0,0,0,.8)` : "none";
+    }
+
+    let index = 0;
+    const rows = defs.map((def, i) => {
+      const row = document.createElement("div");
+      row.className = "mpv-pic__row";
+      const label = document.createElement("span");
+      label.textContent = def.label;
+      const val = document.createElement("span");
+      val.className = "mpv-pic__val";
+      row.appendChild(label);
+      row.appendChild(val);
+      row.addEventListener("click", () => { focus(i); change(1); });
+      list.appendChild(row);
+      def.val = val;
+      return row;
+    });
+    function paint(def) { def.val.textContent = "‹ " + def.text(def.index()) + " ›"; }
+    function focus(i) {
+      index = (i + rows.length) % rows.length;
+      rows.forEach((r, k) => r.classList.toggle("focus", k === index));
+    }
+    function change(dir) {
+      const def = defs[index];
+      def.set((def.index() + dir + def.count) % def.count);
+      paint(def);
+      paintPreview();
+    }
+    function resetAll() {
+      defs.forEach((d) => { d.reset(); paint(d); });
+      paintPreview();
+      showToast(ru ? "Субтитры сброшены" : "Subtitles reset");
+    }
+
+    const close = () => {
+      pictureCloser = null;
+      window.removeEventListener("keydown", onKey, true);
+      overlay.remove();
+      preview.remove();
+      // keyup закрывающей клавиши не должен дойти до Lampa (Enter поставил бы паузу).
+      const timer = setTimeout(release, 1000);
+      function release() { clearTimeout(timer); window.removeEventListener("keyup", swallow, true); window.removeEventListener("keypress", swallow, true); }
+      swallowDone = (e) => { if (e.type === "keyup") setTimeout(release, 0); };
+    };
+    let swallowDone = null;
+    function swallow(e) { e.preventDefault(); e.stopImmediatePropagation(); if (swallowDone) swallowDone(e); }
+    function onKey(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.key === "ArrowUp") focus(index - 1);
+      else if (e.key === "ArrowDown") focus(index + 1);
+      else if (e.key === "ArrowRight") change(1);
+      else if (e.key === "ArrowLeft") change(-1);
+      else if (e.repeat) return;
+      else if (e.code === "KeyR") resetAll();
+      else if (e.key === "Escape" || e.key === "Backspace" || e.key === "BrowserBack" || e.code === "KeyY" || e.key === "Enter") close();
+    }
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", swallow, true);
+    window.addEventListener("keypress", swallow, true);
+    pictureCloser = close;
+    document.body.appendChild(preview);
+    document.body.appendChild(overlay);
+    defs.forEach(paint);
+    paintPreview();
+    focus(0);
+  }
+
   // Клавиши плеера (пока играет mpv): [ ] — скорость на 0.25 (\ — сброс), , . — задержка звука на 0.1 с,
   // Z X — задержка субтитров, S — скриншот, I — окно статистики, C — панель «Картинка». Работают при видео и при панели плеера.
   let speedTouched = false;
@@ -869,6 +1302,7 @@
     const next = Math.round((current + delta) * 10) / 10;
     api.set(prop, next);
     delaysTouched = true;
+    if (prop === "sub-delay" && active && active.__rememberSubDelay) active.__rememberSubDelay(next);
     showToast((ruLang(L) ? titleRu : titleEn) + ": " + (next > 0 ? "+" : "") + next.toFixed(1) + " " + L.Lang.translate("app_settings_mpv_second"));
   }
 
@@ -935,7 +1369,7 @@
     document.body.appendChild(el);
     const names = ["video-codec", "hwdec-current", "video-params", "container-fps", "estimated-vf-fps", "video-bitrate",
       "frame-drop-count", "decoder-frame-drop-count", "vo-delayed-frame-count", "avsync", "audio-codec-name", "audio-params",
-      "audio-bitrate", "track-list", "demuxer-cache-state", "demuxer-cache-time", "time-pos", "speed", "volume", "audio-delay", "sub-delay"];
+      "audio-bitrate", "track-list", "cache-speed", "demuxer-cache-state", "demuxer-cache-time", "time-pos", "speed", "volume", "audio-delay", "sub-delay"];
     const ru = ruLang(L);
     const tick = async () => {
       if (!active) return closeStatsPanel();
@@ -943,6 +1377,7 @@
       const vals = await Promise.all(names.map((n) => api.get(n).catch(() => null)));
       const v = Object.fromEntries(names.map((n, i) => [n, vals[i]]));
       const num = (x, d = 0) => (Number.isFinite(Number(x)) && x !== null ? Number(x).toFixed(d) : "—");
+      const bufferAhead = Number(v["demuxer-cache-time"]) - Number(v["time-pos"]);
       const params = v["video-params"] || {};
       const aparams = v["audio-params"] || {};
       const cache = v["demuxer-cache-state"] || {};
@@ -956,8 +1391,8 @@
         [ru ? "Рассинхрон A/V" : "A/V sync", num(v.avsync, 3) + " " + L.Lang.translate("app_settings_mpv_second")],
         [ru ? "Аудио" : "Audio", [[codecLabel(v["track-list"]), channelsLabel(aparams, v["track-list"])].filter(Boolean).join(" "), aparams.samplerate ? Math.round(aparams.samplerate / 1000 * 10) / 10 + " kHz" : null].filter(Boolean).join(" · ")],
         [ru ? "Битрейт" : "Bitrate", num(v["video-bitrate"] / 1e6, 2) + " + " + num(v["audio-bitrate"] / 1e6, 2) + " Mbit/s"],
-        [ru ? "Сеть" : "Network", Number.isFinite(cache["raw-input-rate"]) ? num(cache["raw-input-rate"] * 8 / 1e6, 2) + " Mbit/s" : "—"],
-        [ru ? "Буфер вперёд" : "Buffer ahead", num(Number(v["demuxer-cache-time"]) - Number(v["time-pos"]), 1) + " " + L.Lang.translate("app_settings_mpv_second")],
+        [ru ? "Сеть" : "Network", networkLabel(v["cache-speed"], cache["raw-input-rate"], bufferAhead, cache.eof, ru)],
+        [ru ? "Буфер вперёд" : "Buffer ahead", Number.isFinite(bufferAhead) ? num(bufferAhead, 1) + " " + L.Lang.translate("app_settings_mpv_second") : "—"],
         ...(torrentStat ? torrentRows(L, ru) : [[ru ? "Торрент" : "Torrent", [text(".player-info__values .value--speed"), text(".player-info__values .value--stat")].filter(Boolean).join(" · ")]]),
         [ru ? "Скорость / громкость" : "Speed / volume", num(v.speed, 2) + "× / " + num(v.volume) + "%"],
         [ru ? "Задержки аудио / субтитров" : "Audio / sub delay", num(v["audio-delay"], 1) + " / " + num(v["sub-delay"], 1) + " " + L.Lang.translate("app_settings_mpv_second")],
@@ -990,6 +1425,11 @@
       [["I"], "Статистика", "Окно с кодеками, декодером, пропущенными кадрами, сетью, буфером и данными торрента. Повторное нажатие закрывает."],
       [["P"], "Профиль mpv", "Выбор набора опций из mpv.conf. Применяется сразу и запоминается."],
       [["C"], "Картинка", "Ползунки гаммы, яркости, контраста и насыщенности для ручной подстройки (например, тёмного видео) и «Автокоррекция SDR» (свои гамма и насыщенность, только для SDR-видео, не HDR). Значения запоминаются и ставятся при каждом открытии видео; «Сбросить всё» возвращает профиль."],
+      [["Y"], "Вид субтитров", "Размер, положение, цвет, фон, обводка, тень, шрифт, отступ снизу и режим поиска в интернете. Пример субтитра показывается поверх видео. Те же значения, что в «Настройки → MPV». Есть и кнопка на панели плеера."],
+      [["V"], "Картинка", "То же, что C. Есть и кнопка на панели плеера."],
+      [["A"], "Следующая озвучка", "Переключает звуковую дорожку по кругу и показывает её название. Выбор запоминается для сериала."],
+      [["J"], "Следующие субтитры", "Переключает субтитры по кругу, после последних они выключаются. Выбор запоминается для сериала."],
+      [["PgUp", "PgDn"], "Главы", "Предыдущая и следующая глава файла (метки видны на шкале времени, если глав несколько)."],
       [["U"], "Субтитры из интернета", "Поиск русских или английских субтитров (OpenSubtitles), выбор варианта и включение. Есть и кнопка на панели плеера."],
       [["N"], "Пропустить", "Пропускает заставку, пересказ, титры или анонс, пока внизу справа показана кнопка «Пропустить…» (таймкоды TheIntroDB)."],
       [["H"], "Справка", "Это окно. Закрыть: Esc, Enter или H."],
@@ -1005,6 +1445,11 @@
       [["I"], "Statistics", "Window with codecs, decoder, dropped frames, network, buffer and torrent data. Press again to close."],
       [["P"], "mpv profile", "Pick a set of options from mpv.conf. Applies immediately and is remembered."],
       [["C"], "Picture", "Sliders for gamma, brightness, contrast and saturation for manual tuning (for example, a dark video), and “SDR auto-correction” (its own gamma and saturation, only for SDR video, not HDR). Values are remembered and set whenever a video opens; “Reset all” brings back the profile."],
+      [["Y"], "Subtitle style", "Size, position, color, background, outline, shadow, font, bottom margin and the online search mode. A sample subtitle is shown over the video. The same values as in Settings → MPV. A panel button does the same."],
+      [["V"], "Picture", "Same as C. A panel button does the same."],
+      [["A"], "Next audio track", "Cycles the audio track and shows its name. The choice is remembered for the series."],
+      [["J"], "Next subtitles", "Cycles the subtitles; after the last one they turn off. The choice is remembered for the series."],
+      [["PgUp", "PgDn"], "Chapters", "Previous and next chapter of the file (marks show on the timeline when there are several)."],
       [["U"], "Online subtitles", "Search Russian or English subtitles (OpenSubtitles), pick a variant and turn it on. A panel button does the same."],
       [["N"], "Skip", "Skips the intro, recap, credits or preview while the “Skip…” button is shown at the bottom right (TheIntroDB timestamps)."],
       [["H"], "Help", "This window. Close: Esc, Enter or H."],
@@ -1091,6 +1536,12 @@
       const t = event.target;
       if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
       if (document.querySelector(".mpv-conf, .mpv-pick") || document.body.classList.contains("selectbox--open")) return;
+      // Esc сначала закрывает панель статистики (она не модальная), и только потом Lampa закроет плеер.
+      if (event.key === "Escape" && document.querySelector(".mpv-statpanel")) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return closeStatsPanel();
+      }
       const code = event.code;
       const handlers = {
         BracketLeft: () => changeSpeed(L, -0.25),
@@ -1103,9 +1554,15 @@
         KeyS: () => !event.repeat && takeScreenshot(L),
         KeyI: () => !event.repeat && toggleStatsPanel(L),
         KeyC: () => !event.repeat && openPicture(L),
+        KeyV: () => !event.repeat && openPicture(L),
+        KeyY: () => !event.repeat && openSubStyle(L),
         KeyH: () => !event.repeat && openHelp(L),
         KeyN: () => !event.repeat && active && active.__skipNow && active.__skipNow(),
         KeyU: () => !event.repeat && active && active.__subsMenu && active.__subsMenu(),
+        KeyA: () => !event.repeat && active && active.__cycleTrack && active.__cycleTrack("audio"),
+        PageUp: () => active && active.__chapter && active.__chapter(-1),
+        PageDown: () => active && active.__chapter && active.__chapter(1),
+        KeyJ: () => !event.repeat && active && active.__cycleTrack && active.__cycleTrack("sub"),
       };
       if (!handlers[code] || event.shiftKey) return;
       event.preventDefault();
@@ -1214,7 +1671,15 @@
   function stopProfileButton() {
     clearInterval(profileButtonTimer);
     profileButtonTimer = null;
-    document.querySelectorAll(".player-panel__mpvprofile, .player-panel__mpvhelp, .player-panel__mpvsubs").forEach((n) => n.remove());
+    // Родная кнопка субтитров возвращается на своё место, а наш блок слева убирается.
+    const nativeSubs = document.querySelector(".player-panel__mpvsubbox .player-panel__subs");
+    if (nativeSubs && nativeSubsHome) {
+      if (nativeSubsHome.next && nativeSubsHome.next.length) nativeSubsHome.next.before(nativeSubs);
+      else nativeSubsHome.parent.append(nativeSubs);
+    }
+    nativeSubsHome = null;
+    document.querySelectorAll(".player-panel__mpvsubbox").forEach((n) => n.remove());
+    document.querySelectorAll(".player-panel__mpvprofile, .player-panel__mpvhelp, .player-panel__mpvsubs, .player-panel__mpvsubstyle, .player-panel__mpvpicture").forEach((n) => n.remove());
   }
 
   // Стили окон с полем ввода (редактор mpv.conf и ввод API-ключа).
@@ -1449,7 +1914,7 @@
   }
 
   // «AC3 5.1 • 640 kbps • 48 kHz»: кодек и каналы, битрейт аудиодорожки (mpv отдаёт не сразу), частота.
-  function audioLabel(bitrate, params, tracks) {
+  function statsAudioLabel(bitrate, params, tracks) {
     const parts = [];
     const head = [codecLabel(tracks), channelsLabel(params, tracks)].filter(Boolean).join(" ");
     if (head) parts.push(head);
@@ -1469,7 +1934,7 @@
       volume: 1, muted: false, rate: 1, error: null, pendingSeek: null,
       metadataSent: false, destroyed: false, lastTimeEvent: 0,
       waiting: false, waitTime: 0, openingStart: 0, seekTarget: null, tracksKnown: false, tracksTimedOut: false,
-      audio: [], subs: [], levels: [], pendingSubOff: null, dvWarned: false,
+      audio: [], subs: [], levels: [], chapters: [], pendingSubOff: null, dvWarned: false,
     };
     const playback = (L.Player.playdata && L.Player.playdata()) || {};
 
@@ -1563,14 +2028,15 @@
       L.PlayerVideo.listener.send("levels", { levels: state.levels, current: current.quality });
     }
 
-    // Название языка по коду mpv (rus, eng, ru…). Без знания кода возвращаем его как есть.
-    let langNames = null;
+    // Название языка по коду mpv (rus, eng, ru…) на языке Lampa. Без знания кода возвращаем его как есть.
+    const langNamers = {};
     function langName(code) {
       const raw = String(code || "").trim();
       if (!raw || /^(und|unk|mis|zxx)$/i.test(raw)) return "";
+      const ui = ruLang(L) ? "ru" : "en";
       try {
-        langNames = langNames || new Intl.DisplayNames(["ru"], { type: "language" });
-        const name = langNames.of(raw.toLowerCase());
+        langNamers[ui] = langNamers[ui] || new Intl.DisplayNames([ui], { type: "language" });
+        const name = langNamers[ui].of(normLang(raw) || raw.toLowerCase());
         if (name && name.toLowerCase() !== raw.toLowerCase()) return name.charAt(0).toUpperCase() + name.slice(1);
       } catch (e) { /* неизвестный код — покажем как есть */ }
       return raw;
@@ -1648,6 +2114,8 @@
     }
 
     function seriesKey() {
+      // Карточку фиксируем при первом определении: к концу серии активной страницей Lampa может быть уже другая.
+      if (state.seriesKey) return state.seriesKey;
       const card = playback.card || activeCard();
       const id = card && card.id;
       const isSeries = (playback.season !== undefined && playback.season !== null && Number.isFinite(Number(playback.season))) ||
@@ -1656,7 +2124,7 @@
         console.log(`[mpv] prefs: сериал не определён (id=${id}, season=${playback.season}, card keys = ${card ? Object.keys(card).slice(0, 12).join(",") : "-"})`);
         return null;
       }
-      return String(id);
+      return (state.seriesKey = String(id));
     }
 
     function remember(kind, value) {
@@ -1667,15 +2135,29 @@
       if (!key) return;
       try {
         const prefs = readPrefs();
+        const prev = prefs[key] && prefs[key].audio;
         prefs[key] = Object.assign({}, prefs[key], { [kind]: value });
+        // Другая озвучка — другой тайминг субтитров: прежнюю задержку не переносим.
+        if (kind === "audio" && prev && (prev.studio || prev.title) !== (value.studio || value.title)) delete prefs[key].subDelay;
         localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
         console.log(`[mpv] remembered ${kind}: ${JSON.stringify(value)}`);
       } catch (e) { /* хранилище недоступно: просто не запоминаем */ }
     }
 
-    const rememberAudio = (t) => remember("audio", { lang: t.lang || "", title: t.title || "" });
-    const rememberSub = (t) =>
-      remember("sub", t ? { lang: t.lang || "", forced: Boolean(t.forced), title: t.title || "" } : { off: true });
+    const rememberAudio = (t) => remember("audio", audioPref(t));
+    const rememberSub = (t) => remember("sub", subPref(t));
+
+    // Задержка субтитров (Z/X) запоминается для сериала и ставится на следующих сериях.
+    el.__rememberSubDelay = (value) => {
+      const key = seriesKey();
+      if (!key) return;
+      try {
+        const prefs = readPrefs();
+        prefs[key] = Object.assign({}, prefs[key]);
+        if (value) prefs[key].subDelay = value; else delete prefs[key].subDelay;
+        localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+      } catch (e) { /* хранилище недоступно */ }
+    };
 
     function savedPref(kind) {
       const key = seriesKey();
@@ -1683,24 +2165,9 @@
       return all && all[kind];
     }
 
-    // id запомненной дорожки среди текущих, либо undefined.
-    function savedAudioId(tracks) {
-      const pref = savedPref("audio");
-      if (!pref) return undefined;
-      const sameLang = tracks.filter((t) => (t.lang || "") === pref.lang);
-      const found = sameLang.find((t) => (t.title || "") === pref.title) || sameLang[0];
-      return found ? found.id : undefined;
-    }
-
-    // Субтитры: «выключены» либо дорожка с тем же языком и типом (forced / полные); другой тип не подменяем.
-    function savedSubId(tracks) {
-      const pref = savedPref("sub");
-      if (!pref) return undefined;
-      if (pref.off) return "no";
-      const same = tracks.filter((t) => (t.lang || "") === pref.lang && Boolean(t.forced) === pref.forced);
-      const found = same.find((t) => (t.title || "") === pref.title) || same[0];
-      return found ? found.id : undefined;
-    }
+    // id запомненной дорожки среди текущих, либо undefined (сопоставление — matchAudio/matchSub).
+    const savedAudioId = (tracks) => matchAudio(tracks, savedPref("audio"));
+    const savedSubId = (tracks) => matchSub(tracks, savedPref("sub"));
 
     // Элементы повторяют то, что Lampa ждёт от audioTracks/textTracks у <video>.
     // Подпись в плеере: «номер / язык / название / каналы / кодек».
@@ -1724,7 +2191,8 @@
         const audioTracks = tracks.filter((t) => t.type === "audio");
         if (audioTracks.length > 1) {
           state.audioRestored = true;
-          restoreId = savedAudioId(audioTracks);
+          // Явный выбор для сериала важнее порядка предпочтений из настроек.
+          restoreId = savedPref("audio") ? savedAudioId(audioTracks) : pickByOrder(audioTracks, String(L.Storage.get(AUDIO_ORDER, "") || ""));
           const current = audioTracks.find((t) => t.selected);
           if (restoreId !== undefined && current && current.id === restoreId) restoreId = undefined;
           if (restoreId !== undefined) {
@@ -1739,7 +2207,14 @@
         const subTracks = tracks.filter((t) => t.type === "sub");
         if (subTracks.length > 0) {
           state.subsRestored = true;
-          restoreSub = savedSubId(subTracks);
+          if (savedPref("sub")) restoreSub = savedSubId(subTracks);
+          else {
+            const chosenId = restoreId !== undefined ? restoreId : (tracks.find((t) => t.type === "audio" && t.selected) || {}).id;
+            const chosen = tracks.find((t) => t.type === "audio" && t.id === chosenId);
+            const order = String(L.Storage.get(SUB_ORDER, "") || "");
+            const smart = String(L.Storage.get(SMART_SUBS_SETTING, "off"));
+            restoreSub = order.trim() ? pickByOrder(subTracks, order) : (smart === "off" ? undefined : smartSubs(subTracks, chosen, smart));
+          }
           const current = subTracks.find((t) => t.selected);
           if (restoreSub === "no" ? !current : current && current.id === restoreSub) restoreSub = undefined;
           if (restoreSub !== undefined) {
@@ -1749,15 +2224,12 @@
           }
         }
       }
+      const ru = ruLang(L);
       tracks.forEach((t) => {
-        const flags = [t.forced ? "forced" : "", t["hearing-impaired"] ? "SDH" : ""].filter(Boolean).join(", ");
         const language = langName(t.lang);
-        // Название, повторяющее язык, не дублируем.
-        const title = t.title && t.title.toLowerCase() !== language.toLowerCase() ? t.title : "";
         if (t.type === "audio") {
           const item = {
-            index: audio.length, language, label: title,
-            extra: { channels: t["demux-channel-count"], fourCC: t.codec },
+            index: audio.length, language, label: audioLabel(t, language), studio: trackName(t, language),
             selected: restoreId !== undefined ? t.id === restoreId : Boolean(t.selected),
           };
           Object.defineProperty(item, "enabled", {
@@ -1769,7 +2241,7 @@
         } else if (t.type === "sub") {
           const item = {
             index: subs.length, language,
-            label: [title || t.codec || "", flags].filter(Boolean).join(" · "),
+            label: subLabel(t, language, ru),
             extra: { codec: t.codec },
             selected: restoreSub !== undefined ? t.id === restoreSub : Boolean(t.selected),
           };
@@ -1788,6 +2260,8 @@
       });
       state.audio = audio;
       state.subs = subs;
+      // Меню Lampa берёт названия из переводов плейлиста (язык и метка от сервера, например «rus / LF»); подменяем их нашими.
+      try { L.PlayerPanel.setTranslate({ tracks: audio.slice(), subs: subs.slice() }); } catch (e) { /* панели нет — остаются названия Lampa */ }
       if (!state.levels.length) state.levels = buildLevels(Array.isArray(list) ? list : []);
       console.log(`[mpv] tracks: audio=${audio.length} subs=${subs.length}`);
     }
@@ -1965,6 +2439,60 @@
     }
     el.__subsMenu = openSubsMenu;
 
+    // Главы файла: метки на шкале времени и переход по ним (PageUp / PageDown).
+    function renderChapterMarks() {
+      document.querySelectorAll(".mpv-chapters").forEach((n) => n.remove());
+      const line = document.querySelector(".player-panel__timeline");
+      if (!line || !state.chapters.length || !(state.duration > 0)) return;
+      const box = document.createElement("div");
+      box.className = "mpv-chapters";
+      state.chapters.forEach((c) => {
+        if (!(Number(c.time) > 0.5)) return;
+        const mark = document.createElement("div");
+        mark.className = "mpv-chapter-mark";
+        mark.style.left = Math.min(100, (Number(c.time) / state.duration) * 100) + "%";
+        box.appendChild(mark);
+      });
+      line.appendChild(box);
+    }
+    function loadChapters() {
+      api.get("chapter-list").then((list) => {
+        state.chapters = Array.isArray(list) ? list.filter((c) => Number.isFinite(Number(c.time))) : [];
+        renderChapterMarks();
+        if (state.chapters.length) console.log(`[mpv] chapters: ${state.chapters.length}`);
+      }).catch(() => {});
+    }
+    el.__chapter = (dir) => {
+      const ru = ruLang(L);
+      if (!state.chapters.length) return showToast(ru ? "В файле нет глав" : "No chapters in this file");
+      const target = chapterTarget(state.chapters, state.time, dir);
+      if (!target) return;
+      el.currentTime = target.time;
+      const name = String(state.chapters[target.index].title || "").trim();
+      showToast((ru ? "Глава " : "Chapter ") + (target.index + 1) + "/" + state.chapters.length + (name ? ": " + name : ""));
+    };
+
+    // Клавиши A и J: следующая звуковая дорожка и следующие субтитры по кругу (после последних — «выключены»).
+    el.__cycleTrack = (kind) => {
+      const ru = ruLang(L);
+      const title = (item) => [item.language, item.label].filter(Boolean).join(" · ") || (ru ? "Дорожка " : "Track ") + (item.index + 1);
+      if (kind === "audio") {
+        if (state.audio.length < 2) return showToast(ru ? "Звуковая дорожка одна" : "Only one audio track");
+        const next = state.audio[(Math.max(0, state.audio.findIndex((x) => x.selected)) + 1) % state.audio.length];
+        next.enabled = true;
+        return showToast((ru ? "Звук: " : "Audio: ") + title(next));
+      }
+      if (!state.subs.length) return showToast(ru ? "Субтитров нет" : "No subtitles");
+      const n = state.subs.findIndex((x) => x.selected) + 1;
+      if (n >= state.subs.length) {
+        api.set("sid", "no");
+        rememberSub(null);
+        return showToast(ru ? "Субтитры выключены" : "Subtitles off");
+      }
+      state.subs[n].mode = "showing";
+      showToast((ru ? "Субтитры: " : "Subtitles: ") + title(state.subs[n]));
+    };
+
     // Авто-режим: нет субтитров на выбранном языке — берём лучшие из найденных.
     async function maybeAutoSubs() {
       const mode = String(L.Storage.get(SUBS_SETTING, "manual"));
@@ -2002,7 +2530,11 @@
       try {
         if (card && card.poster_path) artwork = L.TMDB.image("t/p/w500" + card.poster_path);
       } catch (e) { /* без постера */ }
-      api.nowPlaying({ title, subtitle: line ? line.textContent : "", duration: Number(state.duration) || 0, canNext, canPrev, artwork }).catch(() => {});
+      // Озвучка (студия) в подзаголовке «Сейчас играет», если известна и ещё не названа в строке серии.
+      const voice = (state.audio.find((x) => x.selected) || {}).studio || "";
+      let subtitle = line ? line.textContent : "";
+      if (voice && !subtitle.includes(voice)) subtitle = [subtitle, voice].filter(Boolean).join(" · ");
+      api.nowPlaying({ title, subtitle, duration: Number(state.duration) || 0, canNext, canPrev, artwork }).catch(() => {});
     }
 
     el.__remote = (cmd) => {
@@ -2113,11 +2645,7 @@
 
     // Вид субтитров из настроек «MPV»; mpv.conf применится позже (в open) и поэтому важнее.
     function applySubtitleStyle() {
-      for (const [name, { property, def }] of Object.entries(SUB_STYLE)) {
-        const value = String(L.Storage.get(name, def) || def);
-        api.set(property, value);
-        if (name === "mpv_sub_box") api.set("sub-back-color", value === "background-box" ? "#B0000000" : "#00000000");
-      }
+      for (const [name, { def }] of Object.entries(SUB_STYLE)) applySubStyleValue(name, String(L.Storage.get(name, def) || def));
     }
 
     // Открывает (или заново открывает при обрыве) источник с позиции start.
@@ -2135,6 +2663,9 @@
         // Скорость и задержки mpv помнит между файлами: сбрасываем то, что меняли клавишами.
         if (speedTouched) { api.set("speed", 1); speedTouched = false; }
         if (delaysTouched) { api.set("audio-delay", 0); api.set("sub-delay", 0); delaysTouched = false; }
+        // Задержка субтитров, запомненная для этого сериала.
+        const savedDelay = Number(savedPref("subDelay"));
+        if (savedDelay) { api.set("sub-delay", savedDelay); delaysTouched = true; }
         applySubtitleStyle();
       }
       state.loaded = false;
@@ -2143,6 +2674,7 @@
       state.tracksKnown = false;
       state.tracksTimedOut = false;
       state.levels = [];
+      state.chapters = [];
       state.openingStart = start;
       state.seekTarget = state.openingStart > 0 ? state.openingStart : null;
       state.pendingSeek = null;
@@ -2257,6 +2789,7 @@
         state.pendingSeek = null;
         setTimeout(() => { state.tracksTimedOut = true; announceLoaded(false); }, 1500);
         setTimeout(maybeAutoSubs, 3000);
+        setTimeout(loadChapters, 1500);
         announceLoaded(false);
       } else if (ev.event === "playback-restart") {
         // Первый кадр на экране: обложка открытия больше не нужна.

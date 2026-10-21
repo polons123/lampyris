@@ -19,6 +19,7 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
     private static let allowedCommands: Set<String> = ["seek", "stop"]
     private static let allowedSetProperties: Set<String> = ["aid", "sid", "vid", "mute", "pause", "speed", "volume", "audio-delay", "sub-delay",
                                                                   "sub-scale", "sub-pos", "sub-color", "sub-border-style", "sub-back-color",
+                                                                  "sub-border-size", "sub-shadow-offset", "sub-font", "sub-margin-y",
                                                                   "gamma", "brightness", "contrast", "saturation"]
     private static let allowedOpenOptions: Set<String> = ["sid", "demuxer-readahead-secs", "demuxer-max-bytes"]
     private static let allowedSchemes: Set<String> = ["http", "https"]
@@ -28,6 +29,7 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
         "audio-params", "container-fps", "estimated-vf-fps", "video-bitrate", "audio-bitrate", "video-codec",
         "audio-codec-name", "hwdec-current", "frame-drop-count", "decoder-frame-drop-count", "vo-delayed-frame-count",
         "avsync", "demuxer-cache-state", "demuxer-cache-time", "gamma", "brightness", "contrast", "saturation",
+        "cache-speed", "chapter-list",
     ]
     /// Потолок размера ответов внешних сервисов (TheIntroDB, субтитры).
     private static let maxResponseBytes = 2_000_000

@@ -15,4 +15,5 @@ done
 if grep -n -E "\.(append|prepend)\([^()]*,[^()]*\)" Sources/Lampyris/Resources/mpvTube.js | grep -v '\$(' | grep -v 'window\.\$' | grep -v "append(make(a), make(b))"; then
   echo "ОШИБКА: append/prepend с несколькими аргументами (см. docs/ARCHITECTURE.md)" >&2; fail=1
 fi
+scripts/test-js.sh || fail=1
 exit $fail
