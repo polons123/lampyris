@@ -38,6 +38,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
     private final Set<String> getAllowed = new HashSet<>(Arrays.asList("time-pos", "duration", "pause", "mute", "volume", "speed", "aid", "sid", "track-list", "video-params", "video-params/gamma", "demuxer-cache-time", "demuxer-cache-duration", "paused-for-cache", "eof-reached", "gamma", "brightness", "contrast", "saturation", "audio-delay", "sub-delay", "hwdec-current", "video-codec", "audio-codec-name", "video-bitrate", "audio-bitrate", "estimated-vf-fps", "frame-drop-count", "avsync", "display-fps", "container-fps", "video-format", "audio-params", "demuxer-cache-state", "cache-speed", "demuxer-cache-idle", "chapter-list", "decoder-frame-drop-count", "vo-delayed-frame-count"));
     private final Set<String> setAllowed = new HashSet<>(Arrays.asList("pause", "mute", "volume", "speed", "aid", "sid", "vid", "gamma", "brightness", "contrast", "saturation", "audio-delay", "sub-delay", "sub-scale", "sub-pos", "sub-color", "sub-border-style", "sub-back-color", "sub-border-size", "sub-shadow-offset", "sub-font", "sub-margin-y"));
     private final OnlineFeatures online = new OnlineFeatures();
+    // Файлы, выбранные пользователем в системном окне: только их content://-адреса можно открыть из страницы.
+    private final Set<String> localFiles = new HashSet<>();
+    private static final int PICK_LOCAL = 4711;
     private final java.util.concurrent.ThreadPoolExecutor network = new java.util.concurrent.ThreadPoolExecutor(2,2,0,java.util.concurrent.TimeUnit.SECONDS,new java.util.concurrent.ArrayBlockingQueue<>(8));
     private int playbackGeneration;
     private JSONArray cachedTracks;
@@ -61,6 +64,60 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
             @Override public void onSkipToPrevious(){if(playing&&canPrev)sendRemote("prev");}
         },new Handler(Looper.getMainLooper()));
     }
+    // Частота экрана под частоту кадров видео: Android сам выбирает режим дисплея с нужной частотой (0 — вернуть прежний).
+    private void applyDisplayRate(double fps){
+        try{
+            WindowManager.LayoutParams attrs=getWindow().getAttributes();
+            if(!(fps>0)){if(attrs.preferredDisplayModeId!=0){attrs.preferredDisplayModeId=0;getWindow().setAttributes(attrs);}return;}
+            Display display=getWindowManager().getDefaultDisplay();Display.Mode current=display.getMode();
+            List<Display.Mode> modes=new ArrayList<>();
+            for(Display.Mode m:display.getSupportedModes())if(m.getPhysicalWidth()==current.getPhysicalWidth()&&m.getPhysicalHeight()==current.getPhysicalHeight())modes.add(m);
+            float[] rates=new float[modes.size()];for(int i=0;i<rates.length;i++)rates[i]=modes.get(i).getRefreshRate();
+            float rate=DisplayRate.pick(fps,rates);if(Float.isNaN(rate))return;
+            for(Display.Mode m:modes)if(m.getRefreshRate()==rate){attrs.preferredDisplayModeId=m.getModeId();getWindow().setAttributes(attrs);break;}
+        }catch(Exception ignored){}
+    }
+    private String localFd(Uri uri)throws Exception{
+        android.os.ParcelFileDescriptor fd=getContentResolver().openFileDescriptor(uri,"r");
+        if(fd==null)throw new Exception(tr("Файл недоступен","File unavailable"));
+        return "fd://"+fd.detachFd();
+    }
+    private String localTitle(Uri u){
+        String name=null;
+        try(android.database.Cursor c=getContentResolver().query(u,new String[]{android.provider.OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst())name=c.getString(0);}catch(Exception ignored){}
+        if(name==null||name.isEmpty())name=u.getLastPathSegment();if(name==null)name="Video";
+        int dot=name.lastIndexOf('.');if(dot>0)name=name.substring(0,dot);
+        return name.length()>200?name.substring(0,200):name;
+    }
+    // Выбранные файлы превращаются в плейлист Lampa; если страница ещё не готова, повторяем раз в 1,5 с.
+    private void openLocal(List<Uri> uris,int attempt){
+        if(destroyed||uris.isEmpty())return;
+        try{
+            JSONArray items=new JSONArray();
+            for(Uri u:uris){if(!"content".equals(u.getScheme()))continue;localFiles.add(u.toString());items.put(new JSONObject().put("title",localTitle(u)).put("url",u.toString()));}
+            if(items.length()==0)return;
+            web.evaluateJavascript("window.__lampyrisOpenLocal?window.__lampyrisOpenLocal("+items+"):'no-lampa'",value->{
+                String answer=value==null?"":value.replace("\"","");
+                if(answer.equals("ok"))return;
+                if(answer.equals("mpv-off")){Toast.makeText(this,tr("Включите «Использовать mpv для видео» в настройках MPV","Turn on “Use mpv for video” in the MPV settings"),Toast.LENGTH_LONG).show();return;}
+                if(attempt<20)new Handler(Looper.getMainLooper()).postDelayed(()->openLocal(uris,attempt+1),1500);
+                else Toast.makeText(this,tr("Не удалось открыть файл: страница Lampa не готова.","Could not open the file: the Lampa page is not ready."),Toast.LENGTH_LONG).show();
+            });
+        }catch(Exception e){Toast.makeText(this,tr("Не удалось открыть файл","Could not open the file"),Toast.LENGTH_LONG).show();}
+    }
+    private void handleViewIntent(android.content.Intent intent){
+        if(intent==null||!android.content.Intent.ACTION_VIEW.equals(intent.getAction())||intent.getData()==null)return;
+        openLocal(Collections.singletonList(intent.getData()),0);
+    }
+    @Override protected void onNewIntent(android.content.Intent intent){super.onNewIntent(intent);setIntent(intent);handleViewIntent(intent);}
+    @Override protected void onActivityResult(int request,int result,android.content.Intent data){
+        super.onActivityResult(request,result,data);
+        if(request!=PICK_LOCAL||result!=RESULT_OK||data==null)return;
+        List<Uri> uris=new ArrayList<>();
+        if(data.getClipData()!=null)for(int i=0;i<data.getClipData().getItemCount();i++)uris.add(data.getClipData().getItemAt(i).getUri());
+        else if(data.getData()!=null)uris.add(data.getData());
+        openLocal(uris,0);
+    }
     private void sendRemote(String command){try{send(new JSONObject().put("event","remote").put("command",command));}catch(Exception ignored){}}
     private double mpvNumber(String key){try{double n=Double.parseDouble(MPVLib.getPropertyString(key));return Double.isFinite(n)?n:0;}catch(Exception e){return 0;}}
     private void updateMedia(boolean notify){
@@ -77,7 +134,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
         if(notify){android.content.Intent i=new android.content.Intent(this,PlaybackService.class).putExtra("token",mediaSession.getSessionToken()).putExtra("title",mediaTitle).putExtra("subtitle",mediaSubtitle).putExtra("paused",paused).putExtra("ru",ru);startForegroundService(i);serviceStarted=true;}
     }
     private void clearMedia(){if(mediaSession!=null){mediaSession.setPlaybackState(new android.media.session.PlaybackState.Builder().setState(android.media.session.PlaybackState.STATE_STOPPED,0,0).build());mediaSession.setActive(false);}if(serviceStarted){startService(new android.content.Intent(this,PlaybackService.class).setAction(PlaybackService.SHUTDOWN));serviceStarted=false;}lastMetadata="";}
-    private void stopPlayback(){focusPaused=false;suspendedVideo=null;cachedTracks=null;playbackGeneration++;propertyHandler.removeCallbacksAndMessages(null);pendingProperties.clear();scheduledProperties.clear();if(initialized)MPVLib.command(new String[]{"stop"});playing=false;clearMedia();getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(audio!=null)audio.abandonAudioFocusRequest(focus);immersive(false);}
+    private void stopPlayback(){applyDisplayRate(0);focusPaused=false;suspendedVideo=null;cachedTracks=null;playbackGeneration++;propertyHandler.removeCallbacksAndMessages(null);pendingProperties.clear();scheduledProperties.clear();if(initialized)MPVLib.command(new String[]{"stop"});playing=false;clearMedia();getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);if(audio!=null)audio.abandonAudioFocusRequest(focus);immersive(false);}
     private java.io.File configFile(){return new java.io.File(getFilesDir(),"mpv.conf");}
     private String configText()throws Exception{return configFile().exists()?new String(java.nio.file.Files.readAllBytes(configFile().toPath()),StandardCharsets.UTF_8):"";}
     private JSONObject mergedProfiles(PlayerConfig cfg)throws Exception{JSONObject profiles=new JSONObject(asset("profiles.json"));for(Map.Entry<String,Map<String,String>> p:cfg.profiles.entrySet())profiles.put(p.getKey(),new JSONObject(p.getValue()));return profiles;}
@@ -120,6 +177,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
         option("hwdec", "mediacodec,mediacodec-copy"); option("ao", "audiotrack,opensles");
         option("idle", "yes"); option("keep-open", "yes"); option("input-default-bindings", "no");
         option("demuxer-max-bytes", "128MiB"); option("scale", "bilinear"); option("cscale", "bilinear");
+        // Тихое переподключение ffmpeg при обрыве и ответах 429/5xx (пауза растёт до 5 с).
+        option("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_on_http_error=%7%429,5xx,reconnect_delay_max=5");
         option("tls-verify", "yes"); option("tls-ca-file", getFilesDir()+"/cacert.pem");
         MPVLib.init(); initialized = true; MPVLib.listener = this;
         for(String key:PlayerConfig.keys())profileDefaults.put(key,key.equals("af")?"":MPVLib.getPropertyString(key));
@@ -166,6 +225,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
         initMedia();
         String server=getPreferences(0).getString("server", "");
         if(server.isEmpty()) serverDialog(); else load(server);
+        handleViewIntent(getIntent());
     }
     private void prepareFonts(){
         try{
@@ -218,7 +278,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
             });
         } catch(Exception e) { Toast.makeText(this,tr("Не удалось подключить плеер","Could not connect player"),Toast.LENGTH_LONG).show(); }
     }
-    private void resetBridge(){generation++;if(port!=null){port.close();port=null;}stopPlayback();}
+    private void resetBridge(){localFiles.clear();generation++;if(port!=null){port.close();port=null;}stopPlayback();}
 
     private void send(JSONObject obj){if(port!=null&&!destroyed)port.postMessage(new WebMessage(obj.toString()));}
     private Object value(String name) throws Exception {
@@ -254,7 +314,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
             if(Arrays.asList("subsSearch","subsLoad","tidbMedia").contains(m)){onlineRequest(q.getInt("id"),m,a,generation,playbackGeneration);return;}
             switch(m){
                 case "open": {
-                    String url=a.getString(0);if(!http(Uri.parse(url)))throw new Exception("HTTP(S) only");
+                    String url=a.getString(0);Uri openUri=Uri.parse(url);
+                    if("content".equals(openUri.getScheme())){if(!localFiles.contains(url))throw new Exception("File not allowed");url=localFd(openUri);}
+                    else if(!http(openUri))throw new Exception("HTTP(S) only");
                     JSONObject opts=a.optJSONObject(1); if(opts==null)opts=new JSONObject();
                     double start=opts.optDouble("start",0),volume=opts.optDouble("volume",100);
                     if(!Double.isFinite(start)||start<0||start>604800||!Double.isFinite(volume)||volume<0||volume>100)throw new Exception("Invalid playback options");
@@ -274,6 +336,20 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
 
                 }
                 case "stop":stopPlayback();break;
+                case "audioFx": {
+                    JSONObject d=a.getJSONObject(0);JSONArray b=d.optJSONArray("bands");int[] bands=new int[b==null?0:Math.min(b.length(),AudioFx.BAND_FREQUENCIES.length)];
+                    for(int i=0;i<bands.length;i++)bands[i]=(int)b.optDouble(i,0);
+                    String graph=AudioFx.graph(bands,(int)d.optDouble("dialogue",0),d.optBoolean("night"));
+                    for(String[] c:AudioFx.commands(graph))MPVLib.command(c);
+                    result=graph!=null;break;
+                }
+                case "displayRate": {double fps=a.getDouble(0);if(!(fps==0||(fps>=10&&fps<=120)))throw new Exception("Invalid frame rate");applyDisplayRate(fps);result=true;break;}
+                case "pickLocal": {
+                    android.content.Intent pick=new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT).addCategory(android.content.Intent.CATEGORY_OPENABLE).setType("*/*")
+                        .putExtra(android.content.Intent.EXTRA_MIME_TYPES,new String[]{"video/*","audio/*","application/x-matroska"}).putExtra(android.content.Intent.EXTRA_ALLOW_MULTIPLE,true);
+                    try{startActivityForResult(pick,PICK_LOCAL);}catch(Exception e){throw new Exception(tr("Нет приложения для выбора файлов","No app to pick files"));}
+                    result=true;break;
+                }
                 case "get": {String n=a.getString(0);if(!getAllowed.contains(n))throw new Exception("Property not allowed");result=value(n);break;}
                 case "set": {String n=a.getString(0),v=a.getString(1);if(!setAllowed.contains(n)||v.length()>64)throw new Exception("Property not allowed");
                     if(PlayerConfig.keys().contains(n)&&!PlayerConfig.allowed(n,v))throw new Exception("Invalid property value");
