@@ -695,6 +695,9 @@
       .mpv-pic__knob { position:absolute; top:50%; width:1.1em; height:1.1em; margin:-.55em 0 0 -.55em; border-radius:50%;
         background:#fff; box-shadow:0 0 6px rgba(0,0,0,.5); }
       .mpv-pic__val { text-align:right; font-variant-numeric:tabular-nums; }
+      /* Строки с текстовым значением (пресет, речь, ночной режим): значение целиком, без переноса и обрезки. */
+      .mpv-pic__row--text { grid-template-columns:10.4em 1fr auto; }
+      .mpv-pic__row--text .mpv-pic__val { white-space:nowrap; }
       .mpv-pic__row > span:first-child { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
       .mpv-pic__row > div { min-width:0; }
       .mpv-pic__switch { position:relative; width:2.6em; height:1.3em; border-radius:999px; background:rgba(255,255,255,.25); transition:background-color .15s; }
@@ -1163,6 +1166,7 @@
     const rows = defs.map((def, i) => {
       const row = document.createElement("div");
       row.className = "mpv-pic__row";
+      if (def.kind === "preset") row.classList.add("mpv-pic__row--text");
       const label = document.createElement("span");
       label.textContent = def.label;
       const val = document.createElement("span");
@@ -1367,6 +1371,7 @@
     const rows = defs.map((def, i) => {
       const row = document.createElement("div");
       row.className = "mpv-pic__row";
+      if (def.kind === "preset") row.classList.add("mpv-pic__row--text");
       const label = document.createElement("span");
       label.textContent = def.label;
       const val = document.createElement("span");
