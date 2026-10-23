@@ -3,6 +3,7 @@
 //! Порт `MpvBridge.swift`: страница и плагины недоверенные, поэтому принимается только то,
 //! что нужно плееру, и только от доверенного источника.
 
+use crate::audio_fx;
 use crate::i18n::tr;
 use crate::config::{self, MpvConfig};
 use crate::http;
@@ -11,7 +12,9 @@ use crate::player::Player;
 use crate::smtc::NowPlaying;
 use crate::{settings, UserEvent};
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tao::event_loop::EventLoopProxy;
 
 const ALLOWED_COMMANDS: &[&str] = &["seek", "stop"];
@@ -19,6 +22,11 @@ const ALLOWED_SET_PROPERTIES: &[&str] = &[
     "aid", "sid", "vid", "mute", "pause", "speed", "volume", "audio-delay", "sub-delay", "sub-scale", "sub-pos",
     "sub-color", "sub-border-style", "sub-back-color", "sub-border-size", "sub-shadow-offset", "sub-font", "sub-margin-y",
     "gamma", "brightness", "contrast", "saturation",
+];
+/// Видео и звук, которые приложение умеет открывать с диска (общий список для диалога, перетаскивания и моста).
+pub const LOCAL_EXTENSIONS: &[&str] = &[
+    "mkv", "mp4", "m4v", "mov", "avi", "webm", "ts", "m2ts", "mts", "mpg", "mpeg", "wmv", "flv", "ogv", "3gp", "mp3", "m4a", "aac", "flac", "ogg",
+    "opus", "wav", "wma", "ac3", "dts", "mka",
 ];
 const ALLOWED_OPEN_OPTIONS: &[&str] = &["sid", "demuxer-readahead-secs", "demuxer-max-bytes"];
 /// Свойства, которые странице разрешено читать (всё, что использует mpvTube.js и playbackCover.js).
@@ -40,6 +48,18 @@ pub struct Bridge {
     player: Arc<Player>,
     proxy: EventLoopProxy<UserEvent>,
     now_playing: Option<Arc<NowPlaying>>,
+    /// Файлы, выбранные пользователем в самом приложении (диалог, перетаскивание, аргумент запуска): только их можно открыть через `file://`.
+    local_files: Arc<Mutex<HashSet<String>>>,
+}
+
+/// Ключ для сравнения путей: Windows не различает регистр.
+fn path_key(p: &std::path::Path) -> String {
+    p.to_string_lossy().to_lowercase()
+}
+
+/// Файл с поддерживаемым расширением.
+pub fn is_local_media(p: &std::path::Path) -> bool {
+    p.extension().and_then(|e| e.to_str()).is_some_and(|e| LOCAL_EXTENSIONS.contains(&e.to_lowercase().as_str()))
 }
 
 /// «схема://хост:порт» адреса; None для внутренних (about:, data:).
@@ -72,12 +92,34 @@ fn error_json(msg: &str) -> String {
 
 impl Bridge {
     pub fn new(player: Arc<Player>, proxy: EventLoopProxy<UserEvent>, now_playing: Option<Arc<NowPlaying>>) -> Bridge {
-        Bridge { player, proxy, now_playing }
+        Bridge { player, proxy, now_playing, local_files: Arc::new(Mutex::new(HashSet::new())) }
+    }
+
+    /// Запоминает выбранные файлы и возвращает скрипт для страницы: плейлист Lampa. None, если подходящих файлов нет.
+    pub fn local_script(&self, paths: &[PathBuf]) -> Option<String> {
+        let files: Vec<&PathBuf> = paths.iter().filter(|p| p.is_file() && is_local_media(p)).collect();
+        if files.is_empty() {
+            return None;
+        }
+        let items: Vec<Value> = files
+            .iter()
+            .filter_map(|p| {
+                let url = url::Url::from_file_path(p).ok()?;
+                Some(json!({"title": p.file_stem()?.to_string_lossy(), "url": url.as_str()}))
+            })
+            .collect();
+        let mut set = self.local_files.lock().unwrap();
+        for p in &files {
+            set.insert(path_key(p));
+        }
+        Some(format!("window.__lampyrisOpenLocal ? window.__lampyrisOpenLocal({}) : 'no-lampa'", Value::Array(items)))
     }
 
     /// Страница перезагружена или заменена: плеер, которым она управляла, останавливаем.
     pub fn page_did_reset(&self) {
         self.player.page_did_reset();
+        self.local_files.lock().unwrap().clear();
+        let _ = self.proxy.send_event(UserEvent::DisplayRate(None));
         if let Some(np) = &self.now_playing {
             np.clear();
         }
@@ -114,10 +156,23 @@ impl Bridge {
             "available" => reply(Ok(json!(true))),
             "open" => {
                 let Some(url) = args.first().and_then(|v| v.as_str()) else { return reply(Err("bad url".into())) };
-                match url::Url::parse(url) {
+                let mut url = url.to_string();
+                match url::Url::parse(&url) {
                     Ok(u) if matches!(u.scheme(), "http" | "https") => {}
+                    Ok(u) if u.scheme() == "file" => {
+                        // Страница и плагины не выбирают файлы: открывается только то, что пользователь выбрал в приложении.
+                        let allowed = u.to_file_path().ok().filter(|p| self.local_files.lock().unwrap().contains(&path_key(p)));
+                        match allowed {
+                            Some(p) => url = p.to_string_lossy().into_owned(),
+                            None => {
+                                log::warn("mpv", "локальный файл отклонён: не выбран в приложении");
+                                return reply(Err("file not allowed".into()));
+                            }
+                        }
+                    }
                     _ => return reply(Err("bad url".into())),
                 }
+                let url = url.as_str();
                 let empty = json!({});
                 let o = args.get(1).filter(|v| v.is_object()).unwrap_or(&empty);
                 if let Some(v) = o["volume"].as_f64() {
@@ -236,8 +291,31 @@ impl Bridge {
                 let ignored: Vec<Value> = cfg.ignored.iter().map(|i| json!({"line": i.line, "text": i.text, "reason": i.reason})).collect();
                 reply(Ok(json!({"ok": true, "profiles": cfg.profile_names, "ignored": ignored})));
             }
+            "audioFx" => {
+                // Эквалайзер, речь, ночной режим: страница присылает числа, цепочку фильтров собирает приложение.
+                let Some(d) = args.first().filter(|v| v.is_object()) else { return reply(Err("bad args".into())) };
+                let bands: Vec<i64> = d["bands"].as_array().map(|a| a.iter().take(audio_fx::BAND_FREQUENCIES.len()).map(|v| v.as_f64().unwrap_or(0.0) as i64).collect()).unwrap_or_default();
+                let dialogue = d["dialogue"].as_f64().unwrap_or(0.0) as i64;
+                let graph = audio_fx::graph(&bands, dialogue, d["night"].as_bool().unwrap_or(false));
+                for c in audio_fx::commands(graph.as_deref()) {
+                    let refs: Vec<&str> = c.iter().map(String::as_str).collect();
+                    // Отказ (снять фильтр, которого нет) ошибкой не считается: событие command-failed не отправляем.
+                    let _ = player.mpv.command(&refs);
+                }
+                reply(Ok(json!(graph.is_some())));
+            }
+            "displayRate" => {
+                // Частота кадров видео (10…120) или 0: страница не задаёт режим экрана, подбор делает приложение.
+                let fps = args.first().and_then(|v| v.as_f64()).unwrap_or(-1.0);
+                if !(fps == 0.0 || (10.0..=120.0).contains(&fps)) {
+                    return reply(Err("bad fps".into()));
+                }
+                let _ = self.proxy.send_event(UserEvent::DisplayRate(if fps > 0.0 { Some(fps) } else { None }));
+                reply(Ok(json!(true)));
+            }
             "stop" => {
                 player.stop();
+                let _ = self.proxy.send_event(UserEvent::DisplayRate(None));
                 reply(Ok(json!(true)));
             }
             other => reply(Err(format!("unknown method {other}"))),

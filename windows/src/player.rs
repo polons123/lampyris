@@ -55,6 +55,8 @@ impl Player {
             ("wid", hwnd.to_string()), ("vo", vo), ("hwdec", "auto-safe".into()), ("input-default-bindings", "no".into()),
             ("input-vo-keyboard", "no".into()), ("osc", "no".into()), ("config", "no".into()), ("keep-open", "yes".into()),
             ("idle", "yes".into()), ("ytdl", "no".into()), ("load-scripts", "no".into()), ("screenshot-high-bit-depth", "no".into()), ("screenshot-format", "png".into()),
+            // Тихое переподключение ffmpeg при обрыве и ответах 429/5xx (пауза растёт до 5 с); mpv.conf может заменить значение.
+            ("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_on_http_error=%7%429,5xx,reconnect_delay_max=5".into()),
         ] {
             m.option(k, &v);
         }

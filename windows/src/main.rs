@@ -1,8 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod audio_fx;
 mod backup;
 mod bridge;
 mod config;
+mod display_rate;
 mod filedialog;
 mod http;
 mod i18n;
@@ -35,7 +37,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::UI::Controls::{TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TASKDIALOG_NOTIFICATIONS, TDF_ALLOW_DIALOG_CANCELLATION, TDF_ENABLE_HYPERLINKS, TDF_USE_COMMAND_LINKS, TDN_HYPERLINK_CLICKED};
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_YESNO};
-use wry::{NewWindowResponse, PageLoadEvent, WebContext, WebViewBuilder};
+use wry::{DragDropEvent, NewWindowResponse, PageLoadEvent, WebContext, WebViewBuilder};
 
 /// События для главного потока (WebView принадлежит ему): всё остальное шлёт их через прокси.
 pub enum UserEvent {
@@ -67,6 +69,10 @@ pub enum UserEvent {
     LampaRestored(bool),
     /// Страница после восстановления адреса загрузилась: записать данные Lampa.
     ApplyPendingLampa,
+    /// Подобрать частоту экрана под частоту кадров видео (None — вернуть прежний режим).
+    DisplayRate(Option<f64>),
+    /// Открыть выбранные пользователем файлы плейлистом Lampa; число — номер попытки (страница может быть ещё не готова).
+    OpenLocal(Vec<PathBuf>, u32),
 }
 
 /// Команды медиаклавиш (SMTC): пауза и перемотка выполняются в mpv, смена серии передаётся странице.
@@ -502,6 +508,20 @@ fn main() {
                 bridge.handle(ok, key.as_deref().unwrap_or("?"), body);
             }
         })
+        .with_drag_drop_handler({
+            let proxy = proxy.clone();
+            // Видеофайл, брошенный на окно, открывается плеером; прочие файлы WebView2 обрабатывает сам.
+            move |e| {
+                if let DragDropEvent::Drop { paths, .. } = e {
+                    let media: Vec<PathBuf> = paths.into_iter().filter(|p| bridge::is_local_media(p)).collect();
+                    if !media.is_empty() {
+                        let _ = proxy.send_event(UserEvent::OpenLocal(media, 0));
+                        return true;
+                    }
+                }
+                false
+            }
+        })
         .with_navigation_handler({
             let (trusted, loading_own, special) = (trusted.clone(), loading_own.clone(), special.clone());
             move |target| {
@@ -566,6 +586,12 @@ fn main() {
         let _ = proxy.send_event(if server.is_some() { UserEvent::Load } else { UserEvent::App("change".into(), None) });
     }
 
+    // Файлы в аргументах запуска («Открыть с помощью», перетаскивание на значок): открываются, как только страница будет готова.
+    let launch_files: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).filter(|p| bridge::is_local_media(p) && p.is_file()).collect();
+    if !launch_files.is_empty() && test_source.is_none() {
+        let _ = proxy.send_event(UserEvent::OpenLocal(launch_files, 0));
+    }
+
     // Отладочный хук: LAMPA_EVAL=<файл.js;файл2.js> — файлы выполняются на странице по очереди с интервалом 3 с,
     // начиная через LAMPA_EVAL_DELAY секунд (по умолчанию 8).
     if let (Some(paths), true) = (std::env::var("LAMPA_EVAL").ok(), std::env::var_os("LAMPA_DEBUG").is_some()) {
@@ -615,7 +641,7 @@ fn main() {
             m
         };
         let _ = lang.append_items(&[&lang_ru_item, &lang_en_item]);
-        let _ = file.append_items(&[&item("server", "Изменить адрес сервера…\tCtrl+,", "Change server address…\tCtrl+,"), &item("reload", "Перезагрузить\tF5", "Reload\tF5"), &PredefinedMenuItem::separator(), &item("quit", "Выход\tAlt+F4", "Exit\tAlt+F4")]);
+        let _ = file.append_items(&[&item("openvideo", "Открыть видео…\tCtrl+O", "Open video…\tCtrl+O"), &PredefinedMenuItem::separator(), &item("server", "Изменить адрес сервера…\tCtrl+,", "Change server address…\tCtrl+,"), &item("reload", "Перезагрузить\tF5", "Reload\tF5"), &PredefinedMenuItem::separator(), &item("quit", "Выход\tAlt+F4", "Exit\tAlt+F4")]);
         let _ = view.append_items(&[&item("fullscreen", "Полный экран\tF11", "Full screen\tF11"), &top_item]);
         let _ = tools.append_items(&[&item("conf", "Открыть mpv.conf", "Open mpv.conf"), &item("confdir", "Показать mpv.conf в Проводнике", "Show mpv.conf in Explorer"), &PredefinedMenuItem::separator(), &item("backup", "Сохранить настройки в файл…", "Save settings to a file…"), &item("restore", "Восстановить настройки из файла…", "Restore settings from a file…"), &PredefinedMenuItem::separator(), &lang, &verbose_item, &single_item, &item("logdir", "Показать журнал в Проводнике", "Show log in Explorer")]);
         let _ = help.append_items(&[&item("update", "Проверить обновления…", "Check for updates…"), &auto_update_item, &PredefinedMenuItem::separator(), &item("about", "О программе Lampyris", "About Lampyris")]);
@@ -648,6 +674,7 @@ fn main() {
     }
 
     let mut current = server;
+    let mut switcher = display_rate::Switcher::default();
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
@@ -694,15 +721,21 @@ fn main() {
                         let on = match args.get(1) { Some(Value::Bool(b)) => *b, _ => window.fullscreen().is_none() };
                         win_state.track(&window);
                         window.set_fullscreen(if on { Some(Fullscreen::Borderless(None)) } else { None });
+                        if !on { switcher.restore(); }
                         is_full.set(on);
                         let _ = unsafe { if on { menu.hide_for_hwnd(hwnd) } else { menu.show_for_hwnd(hwnd) } };
                         let _ = webview.evaluate_script(&format!("window.__setFullscreen&&window.__setFullscreen({on})"));
                     }
                     Some("reload") => { let _ = proxy.send_event(UserEvent::Load); }
+                    Some("openVideo") => {
+                        let files = filedialog::open_videos(hwnd, tr("Открыть видео", "Open video"));
+                        if !files.is_empty() { let _ = proxy.send_event(UserEvent::OpenLocal(files, 0)); }
+                    }
                     Some("changeServer") => { let _ = proxy.send_event(UserEvent::App("change".into(), None)); }
                     _ => {}
                 },
                 UserEvent::Menu(id) => match id.as_str() {
+                    "openvideo" => { let _ = proxy.send_event(UserEvent::Window(vec![Value::from("openVideo")])); }
                     "server" => { let _ = proxy.send_event(UserEvent::App("change".into(), None)); }
                     "reload" => { log::info("app", "перезагрузка страницы"); let _ = proxy.send_event(UserEvent::Load); }
                     "fullscreen" => { let _ = proxy.send_event(UserEvent::Window(vec![Value::from("fullscreen"), Value::from("toggle")])); }
@@ -712,6 +745,7 @@ fn main() {
                         top_item.set_checked(on);
                     }
                     "quit" => {
+                        switcher.restore();
                         if let Some(p) = &player { p.shutdown(); }
                         win_state.maximized = window.is_maximized();
                         win_state.fullscreen = window.fullscreen().is_some();
@@ -786,6 +820,41 @@ fn main() {
                     }
                     _ => {}
                 },
+                UserEvent::DisplayRate(fps) => match fps {
+                    Some(f) => switcher.match_fps(hwnd, window.fullscreen().is_some(), f),
+                    None => switcher.restore(),
+                },
+                UserEvent::OpenLocal(paths, attempt) => {
+                    let Some(b) = &bridge else { return };
+                    let Some(script) = b.local_script(&paths) else { return };
+                    let proxy = proxy.clone();
+                    let _ = webview.evaluate_script_with_callback(&script, move |res| {
+                        match res.trim_matches('"') {
+                            "ok" => {}
+                            "mpv-off" => {
+                                let _ = proxy.send_event(UserEvent::Update(update::Msg::Info(
+                                    "Lampyris".into(),
+                                    tr("Включите «Использовать mpv для видео» в настройках MPV: встроенный плеер WebView2 не открывает такие файлы.",
+                                       "Turn on “Use mpv for video” in the MPV settings: the built-in WebView2 player cannot open these files.").into(),
+                                )));
+                            }
+                            _ if attempt < 20 => {
+                                // Страница ещё грузится или Lampa не готова: повторяем раз в 1,5 с.
+                                let (proxy, paths) = (proxy.clone(), paths.clone());
+                                std::thread::spawn(move || {
+                                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                                    let _ = proxy.send_event(UserEvent::OpenLocal(paths, attempt + 1));
+                                });
+                            }
+                            _ => {
+                                let _ = proxy.send_event(UserEvent::Update(update::Msg::Info(
+                                    "Lampyris".into(),
+                                    tr("Не удалось открыть файл: страница Lampa не готова.", "Could not open the file: the Lampa page is not ready.").into(),
+                                )));
+                            }
+                        }
+                    });
+                }
                 UserEvent::Update(msg) => match msg {
                     update::Msg::Info(title, text) => message(hwnd, &title, &text, MB_ICONINFORMATION),
                     update::Msg::Error(text) => message(hwnd, tr("Не удалось установить обновление", "Could not install the update"), &text, MB_ICONERROR),
@@ -870,6 +939,7 @@ fn main() {
             },
             Event::WindowEvent { event: WindowEvent::Moved(_) | WindowEvent::Resized(_), .. } => win_state.track(&window),
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                switcher.restore();
                 if let Some(p) = &player { p.shutdown(); }
                 win_state.maximized = window.is_maximized();
                 win_state.fullscreen = window.fullscreen().is_some();

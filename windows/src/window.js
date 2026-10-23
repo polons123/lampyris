@@ -2,7 +2,7 @@
 // 1) Полноэкранный режим: WebView2 без хоста показывал бы элемент только в границах своего окна, поэтому
 //    requestFullscreen/exitFullscreen/fullscreenElement подменены и переключают окно приложения.
 // 2) Клавиши окна: F11 и Alt+Enter (полный экран), Esc (выход из полного экрана), F5 и Ctrl+R (перезагрузка),
-//    Ctrl+, (адрес сервера).
+//    Ctrl+, (адрес сервера), Ctrl+O (открыть видео с диска).
 // 3) Консоль страницы в журнал при включённом подробном журнале (флаг window.__lv).
 (function () {
   if (window.__lampyrisWindow) return;
@@ -47,6 +47,7 @@
     else if (k === "Escape" && fsEl && !e.altKey && !e.ctrlKey) { stop(); send("window", ["fullscreen", false]); }
     else if (k === "F5" || (e.ctrlKey && !e.altKey && (k === "r" || k === "R"))) { stop(); send("window", ["reload"]); }
     else if (e.ctrlKey && !e.altKey && k === ",") { stop(); send("window", ["changeServer"]); }
+    else if (e.ctrlKey && !e.altKey && (k === "o" || k === "O")) { stop(); send("window", ["openVideo"]); }
   }, true);
 
   ["log", "warn", "error"].forEach(function (l) {
