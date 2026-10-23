@@ -55,7 +55,7 @@ dependencies { implementation 'androidx.webkit:webkit:1.12.1' }
 // Автономные проверки конфигурации входят в стандартную проверку Gradle.
 def configTestOutput = layout.buildDirectory.dir('player-config-tests')
 tasks.register('compilePlayerConfigTest', JavaCompile) {
-    source = files('src/main/java/io/github/polons123/lampyris/PlayerConfig.java', '../tests/PlayerConfigTest.java', 'src/main/java/io/github/polons123/lampyris/NetworkAddressPolicy.java', '../tests/NetworkAddressPolicyTest.java', 'src/main/java/io/github/polons123/lampyris/AudioFx.java', 'src/main/java/io/github/polons123/lampyris/DisplayRate.java', '../tests/AudioFxTest.java')
+    source = files('src/main/java/io/github/polons123/lampyris/PlayerConfig.java', '../tests/PlayerConfigTest.java', 'src/main/java/io/github/polons123/lampyris/NetworkAddressPolicy.java', '../tests/NetworkAddressPolicyTest.java', 'src/main/java/io/github/polons123/lampyris/AudioFx.java', 'src/main/java/io/github/polons123/lampyris/DisplayRate.java', 'src/main/java/io/github/polons123/lampyris/Ed25519.java', 'src/main/java/io/github/polons123/lampyris/UpdateLogic.java', '../tests/AudioFxTest.java', '../tests/UpdateLogicTest.java')
     classpath = files()
     destinationDirectory = configTestOutput
     sourceCompatibility = '17'
@@ -81,6 +81,13 @@ tasks.register('audioFxTest', JavaExec) {
     mainClass = 'io.github.polons123.lampyris.AudioFxTest'
 }
 tasks.named('check').configure { dependsOn 'audioFxTest' }
+
+tasks.register('updateLogicTest', JavaExec) {
+    dependsOn 'compilePlayerConfigTest'
+    classpath = files(configTestOutput)
+    mainClass = 'io.github.polons123.lampyris.UpdateLogicTest'
+}
+tasks.named('check').configure { dependsOn 'updateLogicTest' }
 
 // Пакет корневых сертификатов (Mozilla, curl.se/ca) устаревает: без свежих корней TLS к новым центрам сертификации ломается молча.
 tasks.register('caBundleAge') {

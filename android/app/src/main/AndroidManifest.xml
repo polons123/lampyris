@@ -4,10 +4,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <!-- Установка скачанного обновления системным установщиком (пользователь подтверждает её сам). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
     <uses-feature android:name="android.software.leanback" android:required="false"/>
     <uses-feature android:glEsVersion="0x00030000" android:required="true"/>
     <application android:banner="@drawable/tv_banner" android:label="Lampyris" android:icon="@drawable/ic_lampyris" android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false" android:usesCleartextTraffic="true">
+        <receiver android:name=".UpdateResultReceiver" android:exported="false"/>
         <service android:name=".PlaybackService" android:exported="false" android:foregroundServiceType="mediaPlayback"/>
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:enableOnBackInvokedCallback="true" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboard|keyboardHidden|navigation|uiMode|locale|layoutDirection|fontScale|colorMode" android:windowSoftInputMode="adjustResize">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>

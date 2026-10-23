@@ -38,6 +38,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
     private final Set<String> getAllowed = new HashSet<>(Arrays.asList("time-pos", "duration", "pause", "mute", "volume", "speed", "aid", "sid", "track-list", "video-params", "video-params/gamma", "demuxer-cache-time", "demuxer-cache-duration", "paused-for-cache", "eof-reached", "gamma", "brightness", "contrast", "saturation", "audio-delay", "sub-delay", "hwdec-current", "video-codec", "audio-codec-name", "video-bitrate", "audio-bitrate", "estimated-vf-fps", "frame-drop-count", "avsync", "display-fps", "container-fps", "video-format", "audio-params", "demuxer-cache-state", "cache-speed", "demuxer-cache-idle", "chapter-list", "decoder-frame-drop-count", "vo-delayed-frame-count"));
     private final Set<String> setAllowed = new HashSet<>(Arrays.asList("pause", "mute", "volume", "speed", "aid", "sid", "vid", "gamma", "brightness", "contrast", "saturation", "audio-delay", "sub-delay", "sub-scale", "sub-pos", "sub-color", "sub-border-style", "sub-back-color", "sub-border-size", "sub-shadow-offset", "sub-font", "sub-margin-y"));
     private final OnlineFeatures online = new OnlineFeatures();
+    private AppUpdater updater;
     // Файлы, выбранные пользователем в системном окне: только их content://-адреса можно открыть из страницы.
     private final Set<String> localFiles = new HashSet<>();
     private static final int PICK_LOCAL = 4711;
@@ -233,6 +234,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
             .setOnAudioFocusChangeListener(this::audioFocusChanged,new Handler(Looper.getMainLooper())).build();
         if(Build.VERSION.SDK_INT>=33)getOnBackInvokedDispatcher().registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT,this::handleBack);
         initMedia();
+        updater=new AppUpdater(this,getPreferences(0),()->ru,()->playing);
+        new Handler(Looper.getMainLooper()).postDelayed(()->{if(updater!=null)updater.checkAuto();},12000);
         String server=getPreferences(0).getString("server", "");
         if(server.isEmpty()) serverDialog(); else load(server);
         handleViewIntent(getIntent());
@@ -265,7 +268,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
     // Без сохранённого адреса экран остаётся пустым: подсказываем, где его задать.
     private void serverHint(){if(getPreferences(0).getString("server","").isEmpty())Toast.makeText(this,tr("Адрес сервера задаётся в меню ☰ → «Сменить сервер»","Set the server address in the ☰ menu → “Change server”"),Toast.LENGTH_LONG).show();}
     private void menu() {
-        new AlertDialog.Builder(this).setTitle("Lampyris · Preview").setItems(new String[]{tr("Сменить сервер","Change server"),tr("Перезагрузить","Reload"),tr("Проверить mpv (тестовое видео)","Test mpv (sample video)"),tr("О версии","About"),"Язык / Language",tr("Управление: планшет / телевизор","Controls: tablet / TV")},(d,n)->{
+        new AlertDialog.Builder(this).setTitle("Lampyris · Preview").setItems(new String[]{tr("Сменить сервер","Change server"),tr("Перезагрузить","Reload"),tr("Проверить mpv (тестовое видео)","Test mpv (sample video)"),tr("О версии","About"),"Язык / Language",tr("Управление: планшет / телевизор","Controls: tablet / TV"),tr("Проверить обновления","Check for updates"),tr("Автопроверка обновлений: ","Automatic update check: ")+(updater.autoEnabled()?tr("вкл","on"):tr("выкл","off"))},(d,n)->{
+            if(n==6)updater.checkManual();
+            if(n==7){boolean on=!updater.autoEnabled();updater.setAuto(on);Toast.makeText(this,tr("Автопроверка обновлений: ","Automatic update check: ")+(on?tr("вкл","on"):tr("выкл","off")),Toast.LENGTH_SHORT).show();}
             if(n==5){String[] modes={"auto","touch","tv"};String mode=getPreferences(0).getString("device_mode","auto");new AlertDialog.Builder(this).setTitle(tr("Режим управления","Controls mode")).setSingleChoiceItems(new String[]{tr("Автоматически","Automatic"),tr("Планшет / телефон","Tablet / phone"),tr("Телевизор / пульт","TV / remote")},Arrays.asList(modes).indexOf(mode),(dialog,index)->{getPreferences(0).edit().putString("device_mode",modes[index]).apply();dialog.dismiss();web.reload();}).setNegativeButton(tr("Отмена","Cancel"),null).show();}
             if(n==4)new AlertDialog.Builder(this).setTitle("Язык / Language").setItems(new String[]{"Русский","English"},(dialog,index)->{ru=index==0;getPreferences(0).edit().putString("language",ru?"ru":"en").apply();}).show();
             if(n==0)serverDialog(); if(n==1)web.reload(); if(n==2)testVideo(); if(n==3)new AlertDialog.Builder(this).setMessage(tr("Lampyris "+BuildConfig.VERSION_NAME+". Встроенный mpv. ARM32 / ARM64.","Lampyris "+BuildConfig.VERSION_NAME+". Built-in mpv. ARM32 / ARM64.")).setPositiveButton("OK",null).show();
@@ -443,7 +448,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
     private long lastBack;
     // Системный «Назад» на части прошивок доходит дважды (обратный вызов и onBackPressed): второй вызов подряд игнорируем.
     private void handleBack(){long now=SystemClock.uptimeMillis();if(now-lastBack<350)return;lastBack=now;if(testControls!=null){closeTest();return;}if(playing){web.evaluateJavascript("(function(){if(document.querySelector('.mpv-pick,.mpv-conf,.mpv-statpanel')){const target=document.activeElement||document.body;for(const type of ['keydown','keyup'])target.dispatchEvent(new KeyboardEvent(type,{key:'Escape',code:'Escape',keyCode:27,which:27,bubbles:true,cancelable:true}));return true;}if(document.body.classList.contains('selectbox--open')&&window.Lampa){Lampa.Controller.back();return true;}return false;})()",handled->{if(!destroyed&&!"true".equals(handled)){web.evaluateJavascript("window.Lampa && Lampa.Player.close()",null);stopPlayback();}});}else if(web.canGoBack())web.goBack();else finish();}
-    @Override protected void onDestroy(){destroyed=true;resetBridge();network.shutdownNow();if(mediaSession!=null)mediaSession.release();MPVLib.listener=null;if(video!=null)video.getHolder().removeCallback(this);if(initialized){MPVLib.destroy();initialized=false;}if(audio!=null)audio.abandonAudioFocusRequest(focus);if(web!=null){root.removeView(web);web.destroy();}super.onDestroy();}
+    @Override protected void onDestroy(){destroyed=true;if(updater!=null)updater.destroy();resetBridge();network.shutdownNow();if(mediaSession!=null)mediaSession.release();MPVLib.listener=null;if(video!=null)video.getHolder().removeCallback(this);if(initialized){MPVLib.destroy();initialized=false;}if(audio!=null)audio.abandonAudioFocusRequest(focus);if(web!=null){root.removeView(web);web.destroy();}super.onDestroy();}
     private void copyAsset(String name)throws Exception{
         java.io.File target=new java.io.File(getFilesDir(),name);
         String stamp=name+"-version";
