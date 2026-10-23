@@ -42,7 +42,7 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     private var showingError = false
     /// Скрипт восстановления localStorage из резервной копии: выполняется один раз после загрузки страницы, затем страница перезагружается.
     private var pendingRestore: String?
-    private var restoreDone: (@MainActor (Bool) -> Void)?
+    private var restoreDone: (@MainActor (Backup.RestoreOutcome) -> Void)?
 
     init(url: URL) {
         self.url = url
@@ -261,13 +261,18 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         pendingRestore = nil
         let done = restoreDone
         restoreDone = nil
-        if showingError { done?(false); return }
+        if showingError { done?(.pageNotOpen); return }
         webView.evaluateJavaScript(script) { [weak self] result, _ in
             MainActor.assumeIsolated {
-                let ok = (result as? String) == "ok"
-                Log.log(ok ? .info : .warn, "backup", ok ? "данные Lampa восстановлены" : "данные Lampa не восстановлены: страница открыта с другого источника")
-                if ok { self?.loadServer() }
-                done?(ok)
+                let outcome = Backup.parseRestoreResult(result as? String)
+                switch outcome {
+                case .ok: Log.log(.info, "backup", "данные Lampa восстановлены")
+                case .failedRolledBack(let r): Log.log(.warn, "backup", "данные Lampa не восстановлены: запись не удалась (\(r)), прежние данные возвращены")
+                case .failedDataLost(let r): Log.log(.error, "backup", "данные Lampa не восстановлены и прежние не возвращены (\(r))")
+                default: Log.log(.warn, "backup", "данные Lampa не восстановлены: страница открыта с другого источника")
+                }
+                if outcome == .ok { self?.loadServer() }
+                done?(outcome)
             }
         }
     }
@@ -282,12 +287,12 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     }
 
     /// Применяет восстановленный адрес и загружает страницу; данные Lampa записываются после загрузки (`done` получает результат).
-    func restore(url newURL: URL?, lampaScript: String?, done: @escaping @MainActor (Bool) -> Void) {
+    func restore(url newURL: URL?, lampaScript: String?, done: @escaping @MainActor (Backup.RestoreOutcome) -> Void) {
         if let newURL { url = newURL }
         pendingRestore = lampaScript
         restoreDone = lampaScript == nil ? nil : done
         loadServer()
-        if lampaScript == nil { done(true) }
+        if lampaScript == nil { done(.ok) }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

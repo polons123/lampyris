@@ -168,11 +168,12 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
         var request = URLRequest(url: c.url!, timeoutInterval: 6)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await LimitedFetch.data(for: request, limit: maxResponseBytes)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard status == 200 else { return "{\"error\": \"HTTP \(status)\"}" }
-            guard data.count <= maxResponseBytes else { return "{\"error\": \"response too large\"}" }
             return String(data: data, encoding: .utf8) ?? "{\"error\": \"encoding\"}"
+        } catch is LimitedFetch.TooLarge {
+            return "{\"error\": \"response too large\"}"
         } catch {
             return "{\"error\": \"\(error.localizedDescription.replacingOccurrences(of: "\"", with: "'"))\"}"
         }
@@ -187,11 +188,12 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
         var request = URLRequest(url: url, timeoutInterval: 10)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await LimitedFetch.data(for: request, limit: maxResponseBytes)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             guard status == 200 else { return "{\"error\": \"HTTP \(status)\"}" }
-            guard data.count <= maxResponseBytes else { return "{\"error\": \"response too large\"}" }
             return String(data: data, encoding: .utf8) ?? "{\"error\": \"encoding\"}"
+        } catch is LimitedFetch.TooLarge {
+            return "{\"error\": \"response too large\"}"
         } catch {
             return "{\"error\": \"\(error.localizedDescription.replacingOccurrences(of: "\"", with: "'"))\"}"
         }
@@ -203,22 +205,27 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
               host == "strem.io" || host.hasSuffix(".strem.io") else { return ["ok": false, "error": tr("недопустимый адрес", "invalid address")] }
         let generation = player.openGeneration
         do {
-            let (data, response) = try await URLSession.shared.data(for: URLRequest(url: url, timeoutInterval: 15))
-            guard (response as? HTTPURLResponse)?.statusCode == 200, data.count > 0, data.count <= 3_000_000 else {
+            let (data, response) = try await LimitedFetch.data(for: URLRequest(url: url, timeoutInterval: 15), limit: 3_000_000)
+            guard (response as? HTTPURLResponse)?.statusCode == 200, data.count > 0 else {
                 return ["ok": false, "error": tr("не удалось скачать", "could not download")]
             }
+            // За время скачивания могли открыть другое видео: чужие субтитры не записываем и не подключаем.
+            guard generation == player.openGeneration else { return ["ok": false, "error": tr("видео уже сменилось", "the video has already changed")] }
             let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("Lampyris/subs", isDirectory: true)
             try FileManager.default.createDirectory(at: caches, withIntermediateDirectories: true)
-            let id = url.lastPathComponent.filter { $0.isLetter || $0.isNumber }
-            let file = caches.appendingPathComponent("\(id.isEmpty ? UUID().uuidString : id).srt")
+            // Уникальное имя на каждую загрузку: разные адреса с одинаковым концом пути и запоздавшие запросы не перезаписывают друг друга.
+            let file = caches.appendingPathComponent("\(UUID().uuidString).srt")
             try data.write(to: file)
-            // За время скачивания могли открыть другое видео: чужие субтитры не подключаем.
-            guard generation == player.openGeneration else { return ["ok": false, "error": tr("видео уже сменилось", "the video has already changed")] }
             let cleanTitle = String(title.filter { !$0.isNewline }.prefix(120))
             let cleanLang = String(lang.filter { $0.isLetter }.prefix(3))
-            guard player.addSubtitle(path: file.path, title: cleanTitle, lang: cleanLang) else { return ["ok": false, "error": tr("mpv не принял файл", "mpv did not accept the file")] }
+            guard player.addSubtitle(path: file.path, title: cleanTitle, lang: cleanLang) else {
+                try? FileManager.default.removeItem(at: file)
+                return ["ok": false, "error": tr("mpv не принял файл", "mpv did not accept the file")]
+            }
             return ["ok": true]
+        } catch is LimitedFetch.TooLarge {
+            return ["ok": false, "error": tr("файл слишком большой", "the file is too large")]
         } catch {
             return ["ok": false, "error": error.localizedDescription]
         }
@@ -235,11 +242,15 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
         guard !files.isEmpty else { return done("no-files") }
         let items: [[String: String]] = files.map { ["title": $0.deletingPathExtension().lastPathComponent, "url": $0.absoluteString] }
         guard let json = Self.json(items) else { return done("error") }
-        // Пути запоминаются только после того, как страница ответила «ok»: недоверенная страница их не увидит.
-        guard let web = webView else { return done("no-page") }
+        // Список с путями получает только страница нашего сервера: источник открытого документа сверяется и здесь, и в самом
+        // скрипте (страница могла перейти на другой источник между проверкой и выполнением). Пути запоминаются в мосте
+        // до ответа и забываются, если страница не ответила «ok».
+        guard let web = webView, let pageURL = web.url, let key = Self.originKey(pageURL), trustedOrigins().contains(key),
+              let origin = PageOrigin.string(for: pageURL) else { return done("origin") }
         let paths = files.map(\.path)
         localFiles.formUnion(paths)
-        web.evaluateJavaScript("window.__lampyrisOpenLocal ? window.__lampyrisOpenLocal(\(json)) : 'no-lampa'") { [weak self] result, _ in
+        let script = PageOrigin.guarded("window.__lampyrisOpenLocal ? window.__lampyrisOpenLocal(\(json)) : 'no-lampa'", origin: origin)
+        web.evaluateJavaScript(script) { [weak self] result, _ in
             MainActor.assumeIsolated {
                 let answer = (result as? String) ?? "error"
                 if answer != "ok" { self?.localFiles.subtract(paths) }
@@ -293,7 +304,7 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
                 url = parsed.standardizedFileURL.path
             }
             let o = args.count > 1 ? args[1] as? [String: Any] ?? [:] : [:]
-            if let v = o["volume"] as? Double { player.set("volume", String(Int(v))) }
+            if let v = BridgeNumber.clampedInt(o["volume"], in: 0...100) { player.set("volume", String(v)) }
             var opts: [String: String] = [:]
             if let start = o["start"] as? Double, start > 0 { opts["start"] = String(start) }
             for (k, v) in (o["mpvOptions"] as? [String: Any] ?? [:]) {
@@ -330,8 +341,8 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "subsSearch":
             // Поиск субтитров: Stremio OpenSubtitles v3, без ключа. Нужен IMDb-id (tt…), для серии ещё сезон и номер.
             guard let imdb = args.first as? String, Self.matches(Self.imdbId, imdb) else { return replyHandler(nil, "bad imdb") }
-            let season = args.count > 1 ? ((args[1] as? Int) ?? (args[1] as? Double).map(Int.init) ?? 0) : 0
-            let episode = args.count > 2 ? ((args[2] as? Int) ?? (args[2] as? Double).map(Int.init) ?? 0) : 0
+            let season = args.count > 1 ? (BridgeNumber.int(args[1], in: 0...100_000) ?? 0) : 0
+            let episode = args.count > 2 ? (BridgeNumber.int(args[2], in: 0...100_000) ?? 0) : 0
             Task { @MainActor in replyHandler(await Self.searchSubtitles(imdb: imdb, season: season, episode: episode), nil) }
         case "subsLoad":
             guard args.count >= 3, let url = args[0] as? String, let title = args[1] as? String, let lang = args[2] as? String else {
@@ -340,9 +351,9 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
             Task { @MainActor in replyHandler(await self.loadSubtitle(urlString: url, title: title, lang: lang), nil) }
         case "tidbMedia":
             // Запрос к TheIntroDB делает приложение (без ключа: чтение таймкодов авторизации не требует).
-            guard let tmdb = (args.first as? Int) ?? (args.first as? Double).map(Int.init), tmdb > 0 else { return replyHandler(nil, "bad id") }
-            let season = (args.count > 1 ? (args[1] as? Int) ?? (args[1] as? Double).map(Int.init) : nil)
-            let episode = (args.count > 2 ? (args[2] as? Int) ?? (args[2] as? Double).map(Int.init) : nil)
+            guard let tmdb = BridgeNumber.int(args.first, in: 1...100_000_000) else { return replyHandler(nil, "bad id") }
+            let season = args.count > 1 ? BridgeNumber.int(args[1], in: 0...100_000) : nil
+            let episode = args.count > 2 ? BridgeNumber.int(args[2], in: 0...100_000) : nil
             Task { @MainActor in replyHandler(await Self.fetchIntroDB(tmdb: tmdb, season: season, episode: episode), nil) }
         case "nowPlaying":
             guard let d = args.first as? [String: Any], let title = d["title"] as? String else { return replyHandler(nil, "bad args") }
@@ -371,8 +382,8 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "audioFx":
             // Эквалайзер, речь, ночной режим: страница присылает числа, цепочку фильтров собирает приложение.
             guard let d = args.first as? [String: Any] else { return replyHandler(nil, "bad args") }
-            let bands = (d["bands"] as? [Any] ?? []).prefix(AudioFx.bandFrequencies.count).map { Int(($0 as? Double) ?? Double(($0 as? Int) ?? 0)) }
-            let dialogue = Int((d["dialogue"] as? Double) ?? Double((d["dialogue"] as? Int) ?? 0))
+            let bands = (d["bands"] as? [Any] ?? []).prefix(AudioFx.bandFrequencies.count).map { BridgeNumber.clampedInt($0, in: -100...100) ?? 0 }
+            let dialogue = BridgeNumber.clampedInt(d["dialogue"], in: 0...100) ?? 0
             let graph = AudioFx.graph(bands: bands, dialogue: dialogue, night: (d["night"] as? Bool) ?? false)
             for c in AudioFx.commands(graph: graph) { player.commandQuiet(c) }
             replyHandler(graph != nil, nil)

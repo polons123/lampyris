@@ -65,8 +65,8 @@ pub enum UserEvent {
     Update(update::Msg),
     /// Данные страницы Lampa для резервной копии собраны (None — открыта не страница сервера).
     BackupCollected(Option<backup::Lampa>),
-    /// Данные Lampa записаны в localStorage страницы: true — успешно, страницу нужно перезагрузить.
-    LampaRestored(bool),
+    /// Итог записи данных Lampa в localStorage страницы (при успехе страницу нужно перезагрузить).
+    LampaRestored(backup::RestoreOutcome),
     /// Страница после восстановления адреса загрузилась: записать данные Lampa.
     ApplyPendingLampa,
     /// Подобрать частоту экрана под частоту кадров видео (None — вернуть прежний режим).
@@ -825,11 +825,39 @@ fn main() {
                     None => switcher.restore(),
                 },
                 UserEvent::OpenLocal(paths, attempt) => {
-                    let Some(b) = &bridge else { return };
-                    let Some(script) = b.local_script(&paths) else { return };
+                    let Some(b) = bridge.clone() else { return };
+                    // Список с путями получает только страница нашего сервера; источник сверяется и здесь, и в самом скрипте.
+                    let origin = (!special.get()).then(|| webview.url().ok()).flatten().and_then(|u| url::Url::parse(&u).ok())
+                        .filter(|u| origin_key(u).is_some_and(|k| trusted.borrow().contains(&k))).and_then(|u| bridge::page_origin(&u));
+                    let script = origin.as_deref().and_then(|o| b.local_script(&paths, o));
+                    let retry = {
+                        let (proxy, paths) = (proxy.clone(), paths.clone());
+                        move || {
+                            let (proxy, paths) = (proxy.clone(), paths.clone());
+                            if attempt < 20 {
+                                // Страница ещё грузится или Lampa не готова: повторяем раз в 1,5 с.
+                                std::thread::spawn(move || {
+                                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                                    let _ = proxy.send_event(UserEvent::OpenLocal(paths, attempt + 1));
+                                });
+                            } else {
+                                let _ = proxy.send_event(UserEvent::Update(update::Msg::Info(
+                                    "Lampyris".into(),
+                                    tr("Не удалось открыть файл: страница Lampa не готова.", "Could not open the file: the Lampa page is not ready.").into(),
+                                )));
+                            }
+                        }
+                    };
+                    let Some(script) = script else {
+                        // Нет подходящих файлов — молча; страница не открыта или не наша — ждём (повторами).
+                        if origin.is_none() { retry(); }
+                        return;
+                    };
                     let proxy = proxy.clone();
                     let _ = webview.evaluate_script_with_callback(&script, move |res| {
-                        match res.trim_matches('"') {
+                        let answer = res.trim_matches('"').to_string();
+                        if answer != "ok" { b.forget_local(&paths); }
+                        match answer.as_str() {
                             "ok" => {}
                             "mpv-off" => {
                                 let _ = proxy.send_event(UserEvent::Update(update::Msg::Info(
@@ -838,20 +866,7 @@ fn main() {
                                        "Turn on “Use mpv for video” in the MPV settings: the built-in WebView2 player cannot open these files.").into(),
                                 )));
                             }
-                            _ if attempt < 20 => {
-                                // Страница ещё грузится или Lampa не готова: повторяем раз в 1,5 с.
-                                let (proxy, paths) = (proxy.clone(), paths.clone());
-                                std::thread::spawn(move || {
-                                    std::thread::sleep(std::time::Duration::from_millis(1500));
-                                    let _ = proxy.send_event(UserEvent::OpenLocal(paths, attempt + 1));
-                                });
-                            }
-                            _ => {
-                                let _ = proxy.send_event(UserEvent::Update(update::Msg::Info(
-                                    "Lampyris".into(),
-                                    tr("Не удалось открыть файл: страница Lampa не готова.", "Could not open the file: the Lampa page is not ready.").into(),
-                                )));
-                            }
+                            _ => retry(),
                         }
                     });
                 }
@@ -898,16 +913,28 @@ fn main() {
                             message(hwnd, tr("Данные Lampa не восстановлены", "Lampa data was not restored"), tr("Настройки приложения восстановлены, но страница сервера не открылась. Откройте Lampa и восстановите копию ещё раз.", "App settings were restored, but the server page did not open. Open Lampa and restore the backup again."), MB_ICONERROR);
                         } else {
                             let proxy = proxy.clone();
-                            let _ = webview.evaluate_script_with_callback(&script, move |res| { let _ = proxy.send_event(UserEvent::LampaRestored(res.trim_matches('"') == "ok")); });
+                            let _ = webview.evaluate_script_with_callback(&script, move |res| { let _ = proxy.send_event(UserEvent::LampaRestored(backup::parse_restore_result(res.trim_matches('"')))); });
                         }
                     }
                 }
-                UserEvent::LampaRestored(ok) => {
-                    log::info("backup", if ok { "данные Lampa восстановлены" } else { "данные Lampa не восстановлены: страница открыта с другого источника" });
-                    if ok {
-                        let _ = proxy.send_event(UserEvent::Load);
-                    } else {
-                        message(hwnd, tr("Данные Lampa не восстановлены", "Lampa data was not restored"), tr("Настройки приложения восстановлены, но страница сервера открылась с другого адреса, чем в копии. Откройте Lampa и восстановите копию ещё раз.", "App settings were restored, but the server page opened from a different address than in the backup. Open Lampa and restore the backup again."), MB_ICONERROR);
+                UserEvent::LampaRestored(outcome) => {
+                    use backup::RestoreOutcome as R;
+                    let title = tr("Данные Lampa не восстановлены", "Lampa data was not restored");
+                    match &outcome {
+                        R::Ok => log::info("backup", "данные Lampa восстановлены"),
+                        R::FailedRolledBack(r) => log::warn("backup", &format!("данные Lampa не восстановлены: запись не удалась ({r}), прежние данные возвращены")),
+                        R::FailedDataLost(r) => log::error("backup", &format!("данные Lampa не восстановлены и прежние не возвращены ({r})")),
+                        _ => log::warn("backup", "данные Lampa не восстановлены: страница открыта с другого источника"),
+                    }
+                    match outcome {
+                        R::Ok => { let _ = proxy.send_event(UserEvent::Load); }
+                        R::FailedRolledBack(r) => message(hwnd, title, &crate::trf!(
+                            "Запись в хранилище страницы не удалась ({r}), поэтому прежние данные Lampa оставлены без изменений. Настройки приложения восстановлены. Освободите место (например, удалите лишнее из кэша Lampa) и повторите.",
+                            "Writing to the page storage failed ({r}), so the previous Lampa data was left unchanged. App settings were restored. Free some space (for example, clear Lampa's cache) and try again."), MB_ICONWARNING),
+                        R::FailedDataLost(r) => message(hwnd, title, &crate::trf!(
+                            "Запись в хранилище страницы не удалась ({r}), и вернуть прежние данные тоже не удалось: часть данных Lampa могла пропасть. Восстановите копию ещё раз после освобождения места.",
+                            "Writing to the page storage failed ({r}) and the previous data could not be put back: some Lampa data may be lost. Restore the backup again after freeing space."), MB_ICONERROR),
+                        _ => message(hwnd, title, tr("Настройки приложения восстановлены, но страница сервера открылась с другого адреса, чем в копии. Откройте Lampa и восстановите копию ещё раз.", "App settings were restored, but the server page opened from a different address than in the backup. Open Lampa and restore the backup again."), MB_ICONERROR),
                     }
                 }
                 UserEvent::Eval(path) => match std::fs::read_to_string(&path) {

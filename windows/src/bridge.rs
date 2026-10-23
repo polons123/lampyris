@@ -62,6 +62,11 @@ pub fn is_local_media(p: &std::path::Path) -> bool {
     p.extension().and_then(|e| e.to_str()).is_some_and(|e| LOCAL_EXTENSIONS.contains(&e.to_lowercase().as_str()))
 }
 
+/// Источник страницы в том виде, в каком его видит `location.origin` в JS (порт по умолчанию опускается); None не для http(s).
+pub fn page_origin(u: &url::Url) -> Option<String> {
+    matches!(u.scheme(), "http" | "https").then(|| u.origin().ascii_serialization()).filter(|o| o != "null")
+}
+
 /// «схема://хост:порт» адреса; None для внутренних (about:, data:).
 pub fn origin_key(u: &url::Url) -> Option<String> {
     let host = u.host_str()?.to_lowercase();
@@ -95,8 +100,18 @@ impl Bridge {
         Bridge { player, proxy, now_playing, local_files: Arc::new(Mutex::new(HashSet::new())) }
     }
 
+    /// Забывает пути (страница не приняла список или это был чужой источник).
+    pub fn forget_local(&self, paths: &[PathBuf]) {
+        let mut set = self.local_files.lock().unwrap();
+        for p in paths {
+            set.remove(&path_key(p));
+        }
+    }
+
     /// Запоминает выбранные файлы и возвращает скрипт для страницы: плейлист Lampa. None, если подходящих файлов нет.
-    pub fn local_script(&self, paths: &[PathBuf]) -> Option<String> {
+    /// Скрипт сам сверяет `location.origin` с `origin` (источник страницы, на которую приложение собирается его отправить):
+    /// страница могла уйти на другой источник между проверкой и выполнением, а чужая страница пути видеть не должна.
+    pub fn local_script(&self, paths: &[PathBuf], origin: &str) -> Option<String> {
         let files: Vec<&PathBuf> = paths.iter().filter(|p| p.is_file() && is_local_media(p)).collect();
         if files.is_empty() {
             return None;
@@ -112,7 +127,10 @@ impl Bridge {
         for p in &files {
             set.insert(path_key(p));
         }
-        Some(format!("window.__lampyrisOpenLocal ? window.__lampyrisOpenLocal({}) : 'no-lampa'", Value::Array(items)))
+        Some(format!(
+            "(function(){{if(location.origin!=={})return 'origin';return window.__lampyrisOpenLocal ? window.__lampyrisOpenLocal({}) : 'no-lampa'}})()",
+            Value::String(origin.to_string()), Value::Array(items)
+        ))
     }
 
     /// Страница перезагружена или заменена: плеер, которым она управляла, останавливаем.
@@ -358,24 +376,25 @@ fn load_subtitle(player: &Player, url_str: &str, title: &str, lang: &str) -> Val
         Ok(d) if !d.is_empty() => d,
         _ => return json!({"ok": false, "error": tr("не удалось скачать", "could not download")}),
     };
+    // За время скачивания могли открыть другое видео: чужие субтитры не записываем и не подключаем.
+    if generation != player.generation() {
+        return json!({"ok": false, "error": tr("видео уже сменилось", "the video has already changed")});
+    }
     let dir = settings::local_dir().join("Cache").join("subs");
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return json!({"ok": false, "error": e.to_string()});
     }
-    let last = url.path_segments().and_then(|s| s.last()).unwrap_or("");
-    let id: String = last.chars().filter(|c| c.is_alphanumeric()).collect();
-    let name = if id.is_empty() { format!("sub{}", std::process::id()) } else { id };
-    let file = dir.join(format!("{name}.srt"));
+    // Уникальное имя на каждую загрузку: разные адреса с одинаковым концом пути и запоздавшие запросы не перезаписывают друг друга.
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let file = dir.join(format!("sub-{}-{nanos}-{}.srt", std::process::id(), COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     if let Err(e) = std::fs::write(&file, data) {
         return json!({"ok": false, "error": e.to_string()});
-    }
-    // За время скачивания могли открыть другое видео: чужие субтитры не подключаем.
-    if generation != player.generation() {
-        return json!({"ok": false, "error": tr("видео уже сменилось", "the video has already changed")});
     }
     let clean_title: String = title.chars().filter(|c| *c != '\n' && *c != '\r').take(120).collect();
     let clean_lang: String = lang.chars().filter(|c| c.is_alphabetic()).take(3).collect();
     if !player.add_subtitle(&file.to_string_lossy(), &clean_title, &clean_lang) {
+        let _ = std::fs::remove_file(&file);
         return json!({"ok": false, "error": tr("mpv не принял файл", "mpv did not accept the file")});
     }
     json!({"ok": true})
@@ -415,6 +434,15 @@ mod tests {
         assert!(option_value(&json!("1,start=5")).is_none());
         assert!(option_value(&json!("")).is_none());
         assert!(option_value(&json!(true)).is_none());
+    }
+
+    #[test]
+    fn page_origins() {
+        let o = |s: &str| page_origin(&url::Url::parse(s).unwrap());
+        assert_eq!(o("https://Example.com/x").as_deref(), Some("https://example.com"));
+        assert_eq!(o("https://example.com:443/").as_deref(), Some("https://example.com"));
+        assert_eq!(o("http://192.0.2.1:9118/p?q=1").as_deref(), Some("http://192.0.2.1:9118"));
+        assert!(o("file:///tmp/x").is_none() && o("about:blank").is_none() && o("data:text/html,x").is_none());
     }
 
     #[test]

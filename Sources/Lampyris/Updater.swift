@@ -99,11 +99,12 @@ final class Updater {
     }
 
     private func fetch(_ req: URLRequest) async throws -> Data {
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let data: Data, response: URLResponse
+        do { (data, response) = try await LimitedFetch.data(for: req, limit: Update.maxMetaBytes) }
+        catch is LimitedFetch.TooLarge { throw Failure(text: tr("ответ слишком большой", "the response is too large")) }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw Failure(text: tr("сервер обновлений ответил кодом \((response as? HTTPURLResponse)?.statusCode ?? 0)", "the update server replied with code \((response as? HTTPURLResponse)?.statusCode ?? 0)"))
         }
-        guard data.count <= Update.maxMetaBytes else { throw Failure(text: tr("ответ слишком большой", "the response is too large")) }
         return data
     }
 

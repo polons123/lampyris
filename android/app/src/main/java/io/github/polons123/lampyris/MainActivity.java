@@ -89,19 +89,29 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
         int dot=name.lastIndexOf('.');if(dot>0)name=name.substring(0,dot);
         return name.length()>200?name.substring(0,200):name;
     }
+    // Источник страницы в том виде, в каком его видит location.origin в JS (порт по умолчанию опускается).
+    private static String jsOrigin(Uri u){int p=u.getPort();boolean def=p==-1||("https".equals(u.getScheme())&&p==443)||("http".equals(u.getScheme())&&p==80);return u.getScheme()+"://"+u.getHost().toLowerCase(Locale.ROOT)+(def?"":":"+p);}
     // Выбранные файлы превращаются в плейлист Lampa; если страница ещё не готова, повторяем раз в 1,5 с.
+    // Список с путями получает только страница нашего сервера: источник открытого документа сверяется и здесь, и в самом скрипте.
     private void openLocal(List<Uri> uris,int attempt){
         if(destroyed||uris.isEmpty())return;
+        Runnable retry=()->{
+            if(attempt<20)new Handler(Looper.getMainLooper()).postDelayed(()->openLocal(uris,attempt+1),1500);
+            else Toast.makeText(this,tr("Не удалось открыть файл: страница Lampa не готова.","Could not open the file: the Lampa page is not ready."),Toast.LENGTH_LONG).show();
+        };
         try{
-            JSONArray items=new JSONArray();
-            for(Uri u:uris){if(!"content".equals(u.getScheme()))continue;localFiles.add(u.toString());items.put(new JSONObject().put("title",localTitle(u)).put("url",u.toString()));}
+            String page=web.getUrl();
+            if(page==null||approvedOrigin==null||!http(Uri.parse(page))||!approvedOrigin.equals(origin(Uri.parse(page)))){retry.run();return;}
+            JSONArray items=new JSONArray();List<String> added=new ArrayList<>();
+            for(Uri u:uris){if(!"content".equals(u.getScheme()))continue;if(localFiles.add(u.toString()))added.add(u.toString());items.put(new JSONObject().put("title",localTitle(u)).put("url",u.toString()));}
             if(items.length()==0)return;
-            web.evaluateJavascript("window.__lampyrisOpenLocal?window.__lampyrisOpenLocal("+items+"):'no-lampa'",value->{
+            String script="(function(){if(location.origin!=="+JSONObject.quote(jsOrigin(Uri.parse(page)))+")return 'origin';return window.__lampyrisOpenLocal?window.__lampyrisOpenLocal("+items+"):'no-lampa'})()";
+            web.evaluateJavascript(script,value->{
                 String answer=value==null?"":value.replace("\"","");
                 if(answer.equals("ok"))return;
+                localFiles.removeAll(added);
                 if(answer.equals("mpv-off")){Toast.makeText(this,tr("Включите «Использовать mpv для видео» в настройках MPV","Turn on “Use mpv for video” in the MPV settings"),Toast.LENGTH_LONG).show();return;}
-                if(attempt<20)new Handler(Looper.getMainLooper()).postDelayed(()->openLocal(uris,attempt+1),1500);
-                else Toast.makeText(this,tr("Не удалось открыть файл: страница Lampa не готова.","Could not open the file: the Lampa page is not ready."),Toast.LENGTH_LONG).show();
+                retry.run();
             });
         }catch(Exception e){Toast.makeText(this,tr("Не удалось открыть файл","Could not open the file"),Toast.LENGTH_LONG).show();}
     }

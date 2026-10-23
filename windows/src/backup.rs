@@ -121,19 +121,54 @@ impl Backup {
         Ok(b)
     }
 
-    /// JS для восстановления: заменяет localStorage, только если страница открыта с нужного источника. Возвращает "ok" или "origin".
+    /// JS для восстановления: заменяет localStorage, только если страница открыта с нужного источника.
+    /// Прежнее содержимое сохраняется заранее; если запись прервалась (квота и т. п.), оно возвращается.
+    /// Ответ: "ok", "origin", "error:<имя ошибки>" (прежние данные возвращены) или "lost:<имя>" (вернуть не удалось).
+    /// Тот же скрипт, что в `Backup.swift`: менять оба сразу.
     pub fn restore_script(&self) -> Option<String> {
         let l = self.lampa.as_ref()?;
         let data = serde_json::to_string(&l.items).ok()?;
         let lit = |s: &str| serde_json::to_string(s).map(|t| t.replace('\u{2028}', "\\u2028").replace('\u{2029}', "\\u2029"));
         Some(format!(
-            "(function(o,d){{if(location.origin!==o)return 'origin';d=JSON.parse(d);localStorage.clear();for(var k in d)localStorage.setItem(k,d[k]);return 'ok'}})({},{})",
+            "(function(o,d){{if(location.origin!==o)return 'origin';d=JSON.parse(d);var old={{}},i,k;\
+             try{{for(i=0;i<localStorage.length;i++){{k=localStorage.key(i);old[k]=localStorage.getItem(k)}}\
+             localStorage.clear();for(k in d)localStorage.setItem(k,d[k]);return 'ok'}}\
+             catch(e){{try{{localStorage.clear();for(k in old)localStorage.setItem(k,old[k])}}catch(e2){{return 'lost:'+e2.name}}return 'error:'+e.name}}}})({},{})",
             lit(&l.origin).ok()?, lit(&data).ok()?
         ))
     }
 }
 
 /// Разбор ответа `COLLECT_SCRIPT` (JSON объекта {origin, items}).
+/// Итог восстановления данных Lampa на странице (как `Backup.RestoreOutcome` в Swift).
+#[derive(Debug, PartialEq)]
+pub enum RestoreOutcome {
+    Ok,
+    /// Страница открыта с другого источника, чем в копии: ничего не изменено.
+    WrongOrigin,
+    /// Запись не удалась (например, квота хранилища); прежние данные возвращены. Строка — имя ошибки JS.
+    FailedRolledBack(String),
+    /// Запись не удалась, и вернуть прежние данные тоже не удалось.
+    FailedDataLost(String),
+    Unknown,
+}
+
+/// Разбор ответа скрипта восстановления: "ok", "origin", "error:<имя>" или "lost:<имя>".
+pub fn parse_restore_result(result: &str) -> RestoreOutcome {
+    fn reason(rest: &str) -> String {
+        if rest.chars().count() <= 40 && rest.chars().all(|c| c.is_alphanumeric() || c == '_') { rest.to_string() } else { String::new() }
+    }
+    match result {
+        "ok" => RestoreOutcome::Ok,
+        "origin" => RestoreOutcome::WrongOrigin,
+        r => match (r.strip_prefix("error:"), r.strip_prefix("lost:")) {
+            (Some(rest), _) => RestoreOutcome::FailedRolledBack(reason(rest)),
+            (_, Some(rest)) => RestoreOutcome::FailedDataLost(reason(rest)),
+            _ => RestoreOutcome::Unknown,
+        },
+    }
+}
+
 pub fn parse_collected(json_text: &str) -> Option<Lampa> {
     let v: Value = serde_json::from_str(json_text).ok()?;
     let origin = normalized_origin(v.get("origin")?.as_str()?)?;
@@ -221,6 +256,24 @@ mod tests {
         let s = sample().restore_script().unwrap();
         assert!(s.contains("location.origin!==o") && !s.contains('\u{2028}'));
         assert!(Backup::default().restore_script().is_none());
+    }
+
+    #[test]
+    fn restore_script_rolls_back() {
+        let s = sample().restore_script().unwrap();
+        // Прежнее содержимое читается до clear(), откат пишет его обратно, причина сообщается в ответе.
+        assert!(s.find("getItem").unwrap() < s.find("localStorage.clear()").unwrap());
+        assert!(s.contains("catch(e)") && s.contains("'error:'+e.name") && s.contains("'lost:'+e2.name"));
+    }
+
+    #[test]
+    fn restore_result_parsing() {
+        assert_eq!(parse_restore_result("ok"), RestoreOutcome::Ok);
+        assert_eq!(parse_restore_result("origin"), RestoreOutcome::WrongOrigin);
+        assert_eq!(parse_restore_result("error:QuotaExceededError"), RestoreOutcome::FailedRolledBack("QuotaExceededError".into()));
+        assert_eq!(parse_restore_result("lost:QuotaExceededError"), RestoreOutcome::FailedDataLost("QuotaExceededError".into()));
+        assert_eq!(parse_restore_result("error:<script>"), RestoreOutcome::FailedRolledBack(String::new()));
+        assert_eq!(parse_restore_result("что-то"), RestoreOutcome::Unknown);
     }
 
     #[test]

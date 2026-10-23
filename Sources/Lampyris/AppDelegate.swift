@@ -262,9 +262,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let conf = backup.mpvConf { try? MpvConfig.writeText(conf) }
         Log.log(.info, "backup", "настройки восстановлены из файла")
         let hasLampa = backup.lampa != nil
-        web.restore(url: backup.serverURL.flatMap { URL(string: $0) }, lampaScript: backup.restoreScript()) { [weak self] ok in
-            if hasLampa && !ok {
-                self?.infoAlert(tr("Данные Lampa не восстановлены", "Lampa data was not restored"), tr("Настройки приложения восстановлены, но страница сервера не открылась или открылась с другого адреса, чем в копии. Откройте Lampa и восстановите копию ещё раз.", "App settings were restored, but the server page did not open or opened from a different address than in the backup. Open Lampa and restore the backup again."), style: .warning)
+        web.restore(url: backup.serverURL.flatMap { URL(string: $0) }, lampaScript: backup.restoreScript()) { [weak self] outcome in
+            guard hasLampa else { return }
+            let title = tr("Данные Lampa не восстановлены", "Lampa data was not restored")
+            switch outcome {
+            case .ok:
+                break
+            case .failedRolledBack(let reason):
+                self?.infoAlert(title, tr("Запись в хранилище страницы не удалась (\(reason)), поэтому прежние данные Lampa оставлены без изменений. Настройки приложения восстановлены. Освободите место (например, удалите лишнее из кэша Lampa) и повторите.", "Writing to the page storage failed (\(reason)), so the previous Lampa data was left unchanged. App settings were restored. Free some space (for example, clear Lampa's cache) and try again."), style: .warning)
+            case .failedDataLost(let reason):
+                self?.infoAlert(title, tr("Запись в хранилище страницы не удалась (\(reason)), и вернуть прежние данные тоже не удалось: часть данных Lampa могла пропасть. Восстановите копию ещё раз после освобождения места.", "Writing to the page storage failed (\(reason)) and the previous data could not be put back: some Lampa data may be lost. Restore the backup again after freeing space."), style: .critical)
+            default:
+                self?.infoAlert(title, tr("Настройки приложения восстановлены, но страница сервера не открылась или открылась с другого адреса, чем в копии. Откройте Lampa и восстановите копию ещё раз.", "App settings were restored, but the server page did not open or opened from a different address than in the backup. Open Lampa and restore the backup again."), style: .warning)
             }
         }
     }

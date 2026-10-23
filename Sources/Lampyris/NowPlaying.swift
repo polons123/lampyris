@@ -132,8 +132,8 @@ final class NowPlaying {
 
     private func loadArtwork(_ url: URL) async {
         let session = URLSession(configuration: .ephemeral)
-        guard let (data, response) = try? await session.data(from: url),
-              (response as? HTTPURLResponse)?.statusCode == 200, data.count <= Self.maxArtworkBytes,
+        guard let (data, response) = try? await LimitedFetch.data(for: URLRequest(url: url), limit: Self.maxArtworkBytes, session: session),
+              (response as? HTTPURLResponse)?.statusCode == 200,
               (response.mimeType ?? "").hasPrefix("image/"), let image = NSImage(data: data), active,
               artworkURL == url else { return }  // ответ предыдущего фильма не должен заменить постер нового
         nonisolated(unsafe) let picture = image

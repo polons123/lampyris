@@ -125,11 +125,45 @@ public struct Backup: Equatable {
         return Lampa(origin: o, items: items)
     }
 
-    /// JS для восстановления: заменяет localStorage, только если страница открыта с нужного источника. Возвращает "ok" или "origin".
+    /// Итог восстановления данных Lampa на странице.
+    public enum RestoreOutcome: Equatable, Sendable {
+        case ok
+        /// Страница сервера не открылась.
+        case pageNotOpen
+        /// Страница открыта с другого источника, чем в копии: ничего не изменено.
+        case wrongOrigin
+        /// Запись не удалась (например, квота хранилища); прежние данные возвращены. Строка — имя ошибки JS.
+        case failedRolledBack(String)
+        /// Запись не удалась, и вернуть прежние данные тоже не удалось.
+        case failedDataLost(String)
+        case unknown
+    }
+
+    /// Разбор ответа скрипта восстановления: "ok", "origin", "error:<имя>" или "lost:<имя>".
+    public static func parseRestoreResult(_ result: String?) -> RestoreOutcome {
+        guard let result else { return .unknown }
+        if result == "ok" { return .ok }
+        if result == "origin" { return .wrongOrigin }
+        func reason(_ prefix: String) -> String? {
+            guard result.hasPrefix(prefix) else { return nil }
+            let name = String(result.dropFirst(prefix.count))
+            return name.count <= 40 && name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) ? name : ""
+        }
+        if let r = reason("error:") { return .failedRolledBack(r) }
+        if let r = reason("lost:") { return .failedDataLost(r) }
+        return .unknown
+    }
+
+    /// JS для восстановления: заменяет localStorage, только если страница открыта с нужного источника.
+    /// Прежнее содержимое сохраняется заранее; если запись прервалась (квота и т. п.), оно возвращается.
+    /// Ответ: "ok", "origin", "error:<имя ошибки>" (прежние данные возвращены) или "lost:<имя>" (вернуть не удалось).
     public func restoreScript() -> String? {
         guard let lampa, let payload = try? JSONSerialization.data(withJSONObject: lampa.items, options: [.withoutEscapingSlashes]),
               let literal = Self.jsLiteral(String(decoding: payload, as: UTF8.self)), let origin = Self.jsLiteral(lampa.origin) else { return nil }
-        return "(function(o,d){if(location.origin!==o)return 'origin';d=JSON.parse(d);localStorage.clear();for(var k in d)localStorage.setItem(k,d[k]);return 'ok'})(\(origin),\(literal))"
+        return "(function(o,d){if(location.origin!==o)return 'origin';d=JSON.parse(d);var old={},i,k;"
+            + "try{for(i=0;i<localStorage.length;i++){k=localStorage.key(i);old[k]=localStorage.getItem(k)}"
+            + "localStorage.clear();for(k in d)localStorage.setItem(k,d[k]);return 'ok'}"
+            + "catch(e){try{localStorage.clear();for(k in old)localStorage.setItem(k,old[k])}catch(e2){return 'lost:'+e2.name}return 'error:'+e.name}})(\(origin),\(literal))"
     }
 
     /// Строка в виде литерала JS (JSON-строка; U+2028/2029 экранируются).

@@ -61,6 +61,27 @@ struct BackupTests {
         #expect(empty.restoreScript() == nil)
     }
 
+    @Test("скрипт восстановления сохраняет прежнее содержимое и возвращает его при сбое записи")
+    func restoreScriptRollsBack() throws {
+        let s = try #require(sample().restoreScript())
+        // Прежнее содержимое читается до clear(), откат пишет его обратно, причина сообщается в ответе.
+        #expect(s.range(of: "getItem")!.lowerBound < s.range(of: "localStorage.clear()")!.lowerBound)
+        #expect(s.contains("catch(e)"))
+        #expect(s.contains("'error:'+e.name"))
+        #expect(s.contains("'lost:'+e2.name"))
+    }
+
+    @Test("ответ скрипта восстановления разбирается")
+    func restoreResult() {
+        #expect(Backup.parseRestoreResult("ok") == .ok)
+        #expect(Backup.parseRestoreResult("origin") == .wrongOrigin)
+        #expect(Backup.parseRestoreResult("error:QuotaExceededError") == .failedRolledBack("QuotaExceededError"))
+        #expect(Backup.parseRestoreResult("lost:QuotaExceededError") == .failedDataLost("QuotaExceededError"))
+        #expect(Backup.parseRestoreResult("error:<script>") == .failedRolledBack(""))
+        #expect(Backup.parseRestoreResult(nil) == .unknown)
+        #expect(Backup.parseRestoreResult("что-то") == .unknown)
+    }
+
     @Test("ответ страницы разбирается; чужая схема источника отклоняется")
     func collected() {
         let l = Backup.parseCollected(#"{"origin":"http://192.0.2.1:9118","items":{"k":"v"}}"#)
