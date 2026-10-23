@@ -17,6 +17,10 @@ An unofficial [Lampa](https://github.com/yumata/lampa) client for macOS (Apple S
 ## Features
 - Resume playback, per-series memory of audio and subtitle tracks, automatic retry on network drops.
 - Skipping intros and credits using TheIntroDB timestamps, subtitles from the internet (Russian and English).
+- Audio (`E`): 10-band equalizer with presets, dialogue boost and night mode. Sleep timer (`T`) and an optional “Are you still watching?” pause after three episodes in a row with no input.
+- Skipping by the file's chapter names (“Opening”, “Credits”, etc.) when TheIntroDB has no timestamps. Presets in the Picture panel.
+- Local files: File → Open Video… (⌘O / Ctrl+O), drag and drop onto the window, “Open with”; on Android a button in Settings → MPV. Several files become a playlist, and every player feature works.
+- Match the screen refresh rate to the video (Settings → MPV, off by default): 24 fps on 24 or 48 Hz and so on, full screen only.
 - Player hotkeys (help on `H`), statistics (`I`), screenshot (`S`), media keys and "Now Playing".
 - Window state restore, app menu, error page, log.
 - On Windows: full screen (`F11`), media keys and "Now Playing" through the system Windows controls.
