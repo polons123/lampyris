@@ -154,7 +154,10 @@ final class MpvPlayer {
         // config=no: штатный mpv.conf не читаем; свой файл с профилями применяет MpvConfig.
         for (k, v) in [("vo", "libmpv"), ("hwdec", "videotoolbox"), ("input-default-bindings", "no"),
                        ("input-vo-keyboard", "no"), ("osc", "no"), ("config", "no"),
-                       ("keep-open", "yes"), ("idle", "yes"), ("ytdl", "no"), ("load-scripts", "no")] {
+                       ("keep-open", "yes"), ("idle", "yes"), ("ytdl", "no"), ("load-scripts", "no"),
+                       // Тихое переподключение ffmpeg при обрыве и при ответах 429/5xx (с нарастающей паузой до 5 с):
+                       // страница повторяет открытие только если это не помогло. mpv.conf может заменить значение.
+                       ("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_on_http_error=%7%429,5xx,reconnect_delay_max=5")] {
             mpv_set_option_string(h, k, v)
         }
         // Общие опции из mpv.conf — до инициализации, чтобы подействовали и «стартовые» (например, hwdec).
@@ -412,6 +415,9 @@ final class MpvPlayer {
     }
 
     func stop() { command(["stop"]) }
+
+    /// Команда, отказ которой не считается ошибкой (например, снять фильтр, которого нет): событие `command-failed` не отправляется.
+    func commandQuiet(_ args: [String]) { _ = commandStatus(args) }
 
     func command(_ args: [String]) {
         guard let h = handle else { return }

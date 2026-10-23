@@ -22,7 +22,9 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
                                                                   "sub-border-size", "sub-shadow-offset", "sub-font", "sub-margin-y",
                                                                   "gamma", "brightness", "contrast", "saturation"]
     private static let allowedOpenOptions: Set<String> = ["sid", "demuxer-readahead-secs", "demuxer-max-bytes"]
-    private static let allowedSchemes: Set<String> = ["http", "https"]
+    private static let allowedSchemes: Set<String> = ["http", "https", "file"]
+    /// Файлы, выбранные пользователем в самом приложении (меню, перетаскивание): только их путь можно открыть через `file://`.
+    private var localFiles: Set<String> = []
     /// Свойства, которые странице разрешено читать (всё, что использует mpvTube.js и playbackCover.js).
     private static let allowedGetProperties: Set<String> = [
         "pause", "time-pos", "duration", "speed", "volume", "audio-delay", "sub-delay", "track-list", "video-params",
@@ -34,6 +36,9 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// Потолок размера ответов внешних сервисов (TheIntroDB, субтитры).
     private static let maxResponseBytes = 2_000_000
     private static let optionValue = try! NSRegularExpression(pattern: #"^[A-Za-z0-9.]+$"#)
+
+    /// Подбор частоты экрана под видео (nil или 0 — вернуть прежний режим); задаёт WebViewController.
+    var displayRate: (@MainActor (Double?) -> Void)?
 
     init(player: MpvPlayer, webView: WKWebView, trustedOrigins: @escaping @MainActor () -> Set<String>) {
         self.player = player
@@ -81,7 +86,9 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// Страница перезагружена или заменена: плеер, которым она управляла, останавливаем (иначе звук остаётся без интерфейса).
     func pageDidReset() {
         player.stop()
+        displayRate?(nil)
         nowPlaying?.clear()
+        localFiles.removeAll()
         lastSent.removeAll()
         pendingMessages.removeAll()
     }
@@ -217,6 +224,30 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
     }
 
+    /// Видео и звук, которые приложение умеет открывать с диска.
+    static let localExtensions: Set<String> = ["mkv", "mp4", "m4v", "mov", "avi", "webm", "ts", "m2ts", "mts", "mpg", "mpeg", "wmv", "flv", "ogv",
+                                               "3gp", "mp3", "m4a", "aac", "flac", "ogg", "opus", "wav", "wma", "ac3", "dts", "mka"]
+
+    /// Запоминает выбранные файлы и просит страницу открыть их плейлистом Lampa. `done` получает ответ страницы ("ok" или причину отказа).
+    func openLocalFiles(_ urls: [URL], done: @escaping @MainActor (String) -> Void) {
+        let files = urls.filter { $0.isFileURL && Self.localExtensions.contains($0.pathExtension.lowercased()) }
+            .map(\.standardizedFileURL)
+        guard !files.isEmpty else { return done("no-files") }
+        let items: [[String: String]] = files.map { ["title": $0.deletingPathExtension().lastPathComponent, "url": $0.absoluteString] }
+        guard let json = Self.json(items) else { return done("error") }
+        // Пути запоминаются только после того, как страница ответила «ok»: недоверенная страница их не увидит.
+        guard let web = webView else { return done("no-page") }
+        let paths = files.map(\.path)
+        localFiles.formUnion(paths)
+        web.evaluateJavaScript("window.__lampyrisOpenLocal ? window.__lampyrisOpenLocal(\(json)) : 'no-lampa'") { [weak self] result, _ in
+            MainActor.assumeIsolated {
+                let answer = (result as? String) ?? "error"
+                if answer != "ok" { self?.localFiles.subtract(paths) }
+                done(answer)
+            }
+        }
+    }
+
     private func isTrusted(_ frame: WKFrameInfo) -> Bool {
         frame.isMainFrame && trustedOrigins().contains(Self.originKey(frame.securityOrigin))
     }
@@ -251,8 +282,16 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "available":
             replyHandler(true, nil)
         case "open":
-            guard let url = args.first as? String, let scheme = URL(string: url)?.scheme?.lowercased(),
+            guard var url = args.first as? String, let parsed = URL(string: url), let scheme = parsed.scheme?.lowercased(),
                   Self.allowedSchemes.contains(scheme) else { return replyHandler(nil, "bad url") }
+            if scheme == "file" {
+                // Страница и плагины не выбирают файлы: открывается только то, что пользователь выбрал в приложении.
+                guard localFiles.contains(parsed.standardizedFileURL.path) else {
+                    Log.log(.warn, "mpv", "локальный файл отклонён: не выбран в приложении")
+                    return replyHandler(nil, "file not allowed")
+                }
+                url = parsed.standardizedFileURL.path
+            }
             let o = args.count > 1 ? args[1] as? [String: Any] ?? [:] : [:]
             if let v = o["volume"] as? Double { player.set("volume", String(Int(v))) }
             var opts: [String: String] = [:]
@@ -329,8 +368,23 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
             let cfg = MpvConfig.merged(userText: text)
             replyHandler(["ok": true, "profiles": cfg.profileNames,
                           "ignored": cfg.ignored.map { ["line": $0.line, "text": $0.text, "reason": $0.reason] }], nil)
+        case "audioFx":
+            // Эквалайзер, речь, ночной режим: страница присылает числа, цепочку фильтров собирает приложение.
+            guard let d = args.first as? [String: Any] else { return replyHandler(nil, "bad args") }
+            let bands = (d["bands"] as? [Any] ?? []).prefix(AudioFx.bandFrequencies.count).map { Int(($0 as? Double) ?? Double(($0 as? Int) ?? 0)) }
+            let dialogue = Int((d["dialogue"] as? Double) ?? Double((d["dialogue"] as? Int) ?? 0))
+            let graph = AudioFx.graph(bands: bands, dialogue: dialogue, night: (d["night"] as? Bool) ?? false)
+            for c in AudioFx.commands(graph: graph) { player.commandQuiet(c) }
+            replyHandler(graph != nil, nil)
+        case "displayRate":
+            // Частота кадров видео (10…120) или 0: страница не задаёт режим экрана, подбор делает приложение.
+            let fps = (args.first as? Double) ?? Double((args.first as? Int) ?? 0)
+            guard fps == 0 || (fps >= 10 && fps <= 120) else { return replyHandler(nil, "bad fps") }
+            displayRate?(fps)
+            replyHandler(true, nil)
         case "stop":
             player.stop()
+            displayRate?(nil)
             replyHandler(true, nil)
         default:
             replyHandler(nil, "unknown method \(method)")

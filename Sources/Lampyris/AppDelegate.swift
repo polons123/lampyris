@@ -1,6 +1,7 @@
 import AppKit
 import CMpv
 import LampyrisCore
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
@@ -82,6 +83,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     @objc func changeServer() { webController?.changeServer() }
+
+    /// Меню «Файл → Открыть видео…» (⌘O): локальные видео и звук проигрываются тем же плеером, что и онлайн.
+    @objc func openVideoFiles() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.title = tr("Открыть видео", "Open Video")
+        panel.allowedContentTypes = MpvBridge.localExtensions.sorted().compactMap { UTType(filenameExtension: $0) }
+        guard panel.runModal() == .OK else { return }
+        webController?.openLocalVideos(panel.urls)
+    }
+
+    /// Finder: «Открыть с помощью Lampyris» и файл, перетащенный на значок.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        webController?.openLocalVideos(urls)
+    }
 
     @objc func reloadPage() {
         Log.log(.info, "app", "перезагрузка страницы")
@@ -451,6 +468,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: tr("Выйти из Lampyris", "Quit Lampyris"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
+
+        let fileItem = NSMenuItem()
+        main.addItem(fileItem)
+        let fileMenu = NSMenu(title: tr("Файл", "File"))
+        fileMenu.addItem(withTitle: tr("Открыть видео…", "Open Video…"), action: #selector(openVideoFiles), keyEquivalent: "o")
+        fileItem.submenu = fileMenu
 
         let editItem = NSMenuItem()
         main.addItem(editItem)

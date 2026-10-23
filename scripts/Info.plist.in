@@ -14,6 +14,17 @@
     <key>CFBundleVersion</key><string>@BUILD@</string>
     <key>LSMinimumSystemVersion</key><string>13.0</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.video</string>
+    <!-- Видео и звук: «Открыть с помощью» в Finder и перетаскивание на значок (запасной вариант, не основной просмотрщик). -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Video</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array><string>public.movie</string><string>public.audio</string></array>
+        </dict>
+    </array>
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSHighResolutionCapable</key><true/>
     <!-- На MacBook с двумя видеокартами не включать дискретную без необходимости. -->

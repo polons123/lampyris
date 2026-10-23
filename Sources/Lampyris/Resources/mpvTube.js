@@ -21,6 +21,9 @@
     nowPlaying: (info) => call("nowPlaying", info),
     nowPlayingClear: () => call("nowPlayingClear"),
     tidbMedia: (id, season, episode) => call("tidbMedia", id, season == null ? 0 : season, episode == null ? 0 : episode),
+    audioFx: (fx) => call("audioFx", fx),
+    displayRate: (fps) => call("displayRate", fps),
+    pickLocal: () => call("pickLocal"),
     getConfig: () => call("getConfig"),
     setConfig: (text) => call("setConfig", text),
   };
@@ -237,6 +240,30 @@
     const idx = t - Number(chapters[cur].time) > 3 || cur === 0 ? cur : cur - 1;
     return { index: idx, time: Number(chapters[idx].time) };
   }
+
+  // Сегменты пропуска по названиям глав файла («Opening», «Intro», «Credits», «Заставка», «Титры»…): запасной
+  // источник, когда в TheIntroDB нет таймкодов. Сегмент идёт от начала главы до начала следующей (последняя — до конца).
+  const CHAPTER_KINDS = [
+    ["recap", /^(?:recap|previously|пересказ|ранее)(?![\p{L}\p{N}])/iu],
+    ["intro", /^(?:opening|intro|op|заставка|опенинг|вступление)(?![\p{L}\p{N}])/iu],
+    ["credits", /^(?:ending|end credits|credits|outro|ed|титры|эндинг|окончание|конец)(?![\p{L}\p{N}])/iu],
+    ["preview", /^(?:preview|next|превью|анонс)(?![\p{L}\p{N}])/iu],
+  ];
+  function chapterSegments(chapters, duration) {
+    if (!Array.isArray(chapters)) return [];
+    const out = [];
+    chapters.forEach((c, i) => {
+      const title = String(c && c.title || "").trim();
+      const kind = CHAPTER_KINDS.find((k) => k[1].test(title));
+      const start = Number(c && c.time);
+      if (!kind || !Number.isFinite(start)) return;
+      const next = i + 1 < chapters.length ? Number(chapters[i + 1].time) : NaN;
+      const end = Number.isFinite(next) ? next : (duration > 0 ? null : NaN);
+      if (end !== null && !(end - start >= 3)) return;
+      out.push({ type: kind[0], start, end });
+    });
+    return out;
+  }
   // @pure-end
 
   const CLASS = "mpv-active";
@@ -248,6 +275,9 @@
   const SEEK_SETTING = "mpv_seek_step";
   const SKIP_SETTING = "mpv_skip_mode";
   const SUBS_SETTING = "mpv_online_subs";
+  const STILL_SETTING = "mpv_still_watching";
+  const REFRESH_SETTING = "mpv_refresh_match";
+  const LOCAL_BUTTON = "mpv_open_local";
   const SMART_SUBS_SETTING = "mpv_smart_subs";
   const AUDIO_ORDER = "mpv_audio_order";
   const SUB_ORDER = "mpv_sub_order";
@@ -361,6 +391,22 @@
       app_settings_mpv_skipped_intro: { ru: "Заставка пропущена", en: "Intro skipped" },
       app_settings_mpv_skipped_recap: { ru: "Пересказ пропущен", en: "Recap skipped" },
       app_settings_mpv_skip_off: { ru: "Выключено", en: "Off" },
+      app_settings_mpv_still: { ru: "Вопрос «Вы ещё смотрите?»", en: "“Are you still watching?”" },
+      app_settings_mpv_still_descr: {
+        ru: "Если три серии подряд сменились сами, без единого нажатия, следующая ставится на паузу, чтобы не играть всю ночь. Выключено по умолчанию.",
+        en: "If three episodes in a row start on their own with no input, the next one is paused so it does not play all night. Off by default.",
+      },
+      app_settings_mpv_still_on: { ru: "Включено", en: "On" },
+      app_settings_mpv_local: { ru: "Открыть видео с устройства…", en: "Open a video from this device…" },
+      app_settings_mpv_local_descr: {
+        ru: "Выбор видео или звука из памяти устройства; несколько файлов становятся плейлистом. Играет встроенный mpv со всеми функциями плеера (дорожки, субтитры, главы). Файлы также открываются через «Открыть с помощью» в файловом менеджере.",
+        en: "Pick a video or audio file from the device storage; several files become a playlist. The built-in mpv plays it with all player features (tracks, subtitles, chapters). Files also open through “Open with” in a file manager.",
+      },
+      app_settings_mpv_refresh: { ru: "Частота экрана под видео", en: "Match screen refresh rate" },
+      app_settings_mpv_refresh_descr: {
+        ru: "Переключает режим экрана на частоту кадров видео (24 к/с на 24 или 48 Гц), чтобы не было дрожания. Только в полноэкранном режиме; режим возвращается при остановке видео. Работает, если экран или ТВ предлагает такой режим. Выключено по умолчанию.",
+        en: "Switches the display mode to the video frame rate (24 fps to 24 or 48 Hz) to avoid judder. Full screen only; the mode is restored when the video stops. Works if the display or TV offers such a mode. Off by default.",
+      },
       app_settings_mpv_skip_button: { ru: "Кнопка", en: "Button" },
       app_settings_mpv_skip_auto: { ru: "Автоматически", en: "Automatic" },
       app_settings_mpv_seek: { ru: "Шаг перемотки", en: "Seek step" },
@@ -457,6 +503,44 @@
         description: L.Lang.translate("app_settings_mpv_skip_descr"),
       },
     });
+    L.SettingsApi.addParam({
+      component: COMPONENT,
+      param: {
+        name: STILL_SETTING,
+        type: "select",
+        values: { off: L.Lang.translate("app_settings_mpv_skip_off"), on: L.Lang.translate("app_settings_mpv_still_on") },
+        default: "off",
+      },
+      field: {
+        name: L.Lang.translate("app_settings_mpv_still"),
+        description: L.Lang.translate("app_settings_mpv_still_descr"),
+      },
+    });
+    L.SettingsApi.addParam({
+      component: COMPONENT,
+      param: {
+        name: REFRESH_SETTING,
+        type: "select",
+        values: { off: L.Lang.translate("app_settings_mpv_skip_off"), on: L.Lang.translate("app_settings_mpv_still_on") },
+        default: "off",
+      },
+      field: {
+        name: L.Lang.translate("app_settings_mpv_refresh"),
+        description: L.Lang.translate("app_settings_mpv_refresh_descr"),
+      },
+    });
+    // На Android нет меню приложения: файл с устройства выбирается кнопкой в настройках (на macOS и Windows — «Файл → Открыть видео»).
+    if (ANDROID) {
+      L.SettingsApi.addParam({
+        component: COMPONENT,
+        param: { name: LOCAL_BUTTON, type: "button" },
+        field: {
+          name: L.Lang.translate("app_settings_mpv_local"),
+          description: L.Lang.translate("app_settings_mpv_local_descr"),
+        },
+        onChange: () => { api.pickLocal().catch((e) => showToast(String((e && e.message) || e))); },
+      });
+    }
     L.SettingsApi.addParam({
       component: COMPONENT,
       param: {
@@ -813,7 +897,7 @@
       const item = options[i];
       close();
       L.Storage.set(PROFILE_SETTING, item.value);
-      if (live) api.profile(item.value).then(() => applyPicture(L), () => {});
+      if (live) api.profile(item.value).then(() => { applyPicture(L); applyAudioFx(L); }, () => {});
       showToast(L.Lang.translate("app_settings_mpv_profile") + ": " + item.title);
     };
     function onKey(event) {
@@ -935,6 +1019,14 @@
     { name: "saturation", ru: "Насыщенность", en: "Saturation" },
   ];
   const AUTOSDR_DEFAULTS = { on: false, gamma: 8, saturation: 4 };
+  // Пресеты картинки — готовые ручные поправки поверх профиля (те же ползунки, что и в панели; «Свои» — любое другое сочетание).
+  const PICTURE_PRESETS = [
+    { id: "none", ru: "Без поправок", en: "None", v: { gamma: 0, brightness: 0, contrast: 0, saturation: 0 } },
+    { id: "vivid", ru: "Яркая", en: "Vivid", v: { gamma: 0, brightness: 0, contrast: 8, saturation: 20 } },
+    { id: "cinema", ru: "Кино", en: "Cinema", v: { gamma: -4, brightness: -2, contrast: 6, saturation: -6 } },
+    { id: "bright", ru: "Светлая", en: "Bright", v: { gamma: 10, brightness: 12, contrast: 0, saturation: 4 } },
+    { id: "dark", ru: "Тёмная комната", en: "Dark room", v: { gamma: 8, brightness: -8, contrast: -8, saturation: -8 } },
+  ];
   const clampPicture = (v) => Math.max(-100, Math.min(100, Math.round(Number(v)) || 0));
 
   // Lampa.Storage.get сам разбирает JSON и возвращает уже объект, поэтому принимаем и объект, и строку.
@@ -1020,8 +1112,21 @@
     const saveManual = () => L.Storage.set(PICTURE_SETTING, JSON.stringify(touched));
     const saveAuto = () => L.Storage.set(AUTOSDR_SETTING, JSON.stringify(auto));
 
-    // Строки панели: ползунки (value, set), переключатель автокоррекции и сброс.
-    const defs = PICTURE_PROPS.map((p) => ({
+    // Какой пресет совпадает с текущими поправками (иначе «Свои», а без изменений — «Без поправок»).
+    const presetIndex = () => PICTURE_PRESETS.findIndex((pr) => PICTURE_PROPS.every((p) => pr.v[p.name] === values[p.name]));
+    const setPreset = (i) => {
+      const pr = PICTURE_PRESETS[(i + PICTURE_PRESETS.length) % PICTURE_PRESETS.length];
+      PICTURE_PROPS.forEach((p) => { values[p.name] = pr.v[p.name]; touched[p.name] = pr.v[p.name]; });
+      saveManual();
+      scheduleApply();
+    };
+    // Строки панели: пресет, ползунки (value, set), переключатель автокоррекции и сброс.
+    const defs = [{
+      kind: "preset",
+      label: ru ? "Пресет" : "Preset",
+      text: () => { const i = presetIndex(); return i < 0 ? (ru ? "Свои" : "Custom") : (ru ? PICTURE_PRESETS[i].ru : PICTURE_PRESETS[i].en); },
+      step: (dir) => { const i = presetIndex(); setPreset(i < 0 ? (dir > 0 ? 0 : PICTURE_PRESETS.length - 1) : i + dir); },
+    }].concat(PICTURE_PROPS.map((p) => ({
       kind: "slider",
       label: ru ? p.ru : p.en,
       value: () => values[p.name],
@@ -1033,7 +1138,7 @@
         api.set(p.name, clampPicture(((pictureBase && pictureBase[p.name]) || 0) + v)).catch(() => {});
         saveManual();
       },
-    }));
+    })));
     defs.push({
       kind: "toggle",
       label: ru ? "Автокоррекция SDR" : "SDR auto-correction",
@@ -1050,8 +1155,8 @@
     overlay.innerHTML = '<div class="mpv-pick__box"><div class="mpv-pick__title"></div><div class="mpv-pick__list"></div><div class="mpv-pick__hint"></div></div>';
     overlay.querySelector(".mpv-pick__title").textContent = ru ? "Картинка" : "Picture";
     overlay.querySelector(".mpv-pick__hint").textContent = ru
-      ? "↑ ↓ выбор · ← → изменить (Shift — точнее) · 0 — в ноль · R — сброс · Esc. Ручные ползунки — поправка поверх профиля и автокоррекции"
-      : "↑ ↓ select · ← → change (Shift — finer) · 0 — zero · R — reset · Esc. Manual sliders adjust on top of the profile and auto-correction";
+      ? "↑ ↓ выбор · ← → изменить (Shift — точнее; на пресете — сменить) · 0 — в ноль · R — сброс · Esc. Ручные ползунки — поправка поверх профиля и автокоррекции"
+      : "↑ ↓ select · ← → change (Shift — finer; on the preset — switch) · 0 — zero · R — reset · Esc. Manual sliders adjust on top of the profile and auto-correction";
     const list = overlay.querySelector(".mpv-pick__list");
 
     let index = 0;
@@ -1082,6 +1187,7 @@
           const r = track.getBoundingClientRect();
           def.set(((e.clientX - r.left) / r.width) * 200 - 100);
           paint(def);
+          paint(defs[0]);
         };
         track.addEventListener("pointerdown", (e) => {
           focus(i);
@@ -1103,7 +1209,7 @@
           def.switchEl = control;
         }
         row.appendChild(control);
-        row.addEventListener("click", () => { focus(i); if (def.kind === "toggle") { def.toggle(); paint(def); } else resetAll(); });
+        row.addEventListener("click", () => { focus(i); if (def.kind === "toggle") { def.toggle(); paint(def); } else if (def.kind === "preset") { def.step(1); paintAll(); } else resetAll(); });
       }
       row.appendChild(val);
       row.addEventListener("click", () => focus(i));
@@ -1119,6 +1225,7 @@
     function paint(def) {
       if (def.kind === "toggle") { def.val.textContent = def.text(); def.switchEl.classList.toggle("on", auto.on); return; }
       if (def.kind === "reset") { def.val.textContent = "R"; return; }
+      if (def.kind === "preset") { def.val.textContent = "‹ " + def.text() + " ›"; return; }
       const v = def.value();
       const pct = (v + 100) / 2;
       def.fill.style.left = Math.min(50, pct) + "%";
@@ -1158,12 +1265,14 @@
       const dir = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
       if (e.key === "ArrowUp") focus(index - 1);
       else if (e.key === "ArrowDown") focus(index + 1);
-      else if (dir && def.kind === "slider") { def.set(def.value() + dir * (e.shiftKey ? 1 : 5)); paint(def); }
+      else if (dir && def.kind === "slider") { def.set(def.value() + dir * (e.shiftKey ? 1 : 5)); paint(def); paint(defs[0]); }
       else if (dir && def.kind === "toggle") { def.toggle(); paint(def); }
+      else if (dir && def.kind === "preset") { def.step(dir); paintAll(); }
       else if (e.repeat) return;
       else if (e.key === "0" && def.kind === "slider") { def.set(0); paint(def); }
       else if (e.code === "KeyR" || (e.key === "Enter" && def.kind === "reset")) resetAll();
       else if (e.key === "Enter" && def.kind === "toggle") { def.toggle(); paint(def); }
+      else if (e.key === "Enter" && def.kind === "preset") { def.step(1); paintAll(); }
       else if (e.key === "Escape" || e.key === "Backspace" || e.key === "BrowserBack" || e.code === "KeyC" || e.key === "Enter") close();
     }
     window.addEventListener("keydown", onKey, true);
@@ -1173,6 +1282,260 @@
     document.body.appendChild(overlay);
     paintAll();
     focus(0);
+  }
+
+  // ---- Звук (клавиша E): эквалайзер на 10 полос, усиление речи, ночной режим ----
+  // Страница присылает только числа, цепочку фильтров собирает приложение (AudioFx в LampyrisCore, audio_fx.rs в Windows).
+  // Фильтр стоит под своей меткой и не трогает `af` из mpv.conf и профилей; профиль «night» уже сжимает громкость,
+  // поэтому при нём ночной режим из панели не добавляется (иначе двойное сжатие).
+  const AUDIOFX_SETTING = "mpv_audiofx";
+  const EQ_BANDS = ["31", "62", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
+  const EQ_PRESETS = [
+    { id: "flat", ru: "Выкл", en: "Off", v: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    { id: "film", ru: "Фильм", en: "Film", v: [4, 3, 1, 0, -1, 0, 1, 2, 3, 3] },
+    { id: "voice", ru: "Голос", en: "Voice", v: [-4, -3, -2, 0, 2, 4, 4, 2, 0, -2] },
+    { id: "bass", ru: "Бас", en: "Bass", v: [8, 7, 5, 3, 1, 0, 0, 0, 0, 0] },
+    { id: "treble", ru: "Высокие", en: "Treble", v: [0, 0, 0, 0, 0, 1, 3, 5, 6, 7] },
+    { id: "tv", ru: "ТВ (меньше баса)", en: "TV (less bass)", v: [-6, -4, -2, 0, 0, 1, 2, 2, 1, 0] },
+  ];
+  const clampGain = (v) => Math.max(-12, Math.min(12, Math.round(Number(v)) || 0));
+
+  function readAudioFx(L) {
+    const raw = readJson(L, AUDIOFX_SETTING);
+    const bands = EQ_BANDS.map((_, i) => clampGain(Array.isArray(raw.bands) ? raw.bands[i] : 0));
+    return { bands, dialogue: Math.max(0, Math.min(3, Math.round(Number(raw.dialogue)) || 0)), night: raw.night === true };
+  }
+
+  let audioFxApplied = false;
+  async function applyAudioFx(L) {
+    const fx = readAudioFx(L);
+    const empty = !fx.night && !fx.dialogue && fx.bands.every((g) => g === 0);
+    if (empty && !audioFxApplied) return;
+    audioFxApplied = !empty;
+    const night = fx.night && currentProfile(L) !== "night";
+    await api.audioFx({ bands: fx.bands, dialogue: fx.dialogue, night }).catch(() => {});
+  }
+
+  async function openAudioFx(L) {
+    if (document.querySelector(".mpv-pick")) return;
+    addUiStyle();
+    const ru = ruLang(L);
+    const fx = readAudioFx(L);
+    let timer = null;
+    const save = () => { L.Storage.set(AUDIOFX_SETTING, JSON.stringify(fx)); clearTimeout(timer); timer = setTimeout(() => applyAudioFx(L), 120); };
+    const presetIndex = () => EQ_PRESETS.findIndex((pr) => pr.v.every((g, i) => g === fx.bands[i]));
+    const defs = [{
+      kind: "preset",
+      label: ru ? "Эквалайзер" : "Equalizer",
+      text: () => { const i = presetIndex(); return i < 0 ? (ru ? "Свой" : "Custom") : (ru ? EQ_PRESETS[i].ru : EQ_PRESETS[i].en); },
+      step: (dir) => {
+        const i = presetIndex();
+        const pr = EQ_PRESETS[i < 0 ? (dir > 0 ? 0 : EQ_PRESETS.length - 1) : (i + dir + EQ_PRESETS.length) % EQ_PRESETS.length];
+        fx.bands = pr.v.slice();
+        save();
+      },
+    }].concat(EQ_BANDS.map((name, i) => ({
+      kind: "slider",
+      label: name + (ru ? " Гц" : " Hz"),
+      value: () => fx.bands[i],
+      set: (v) => { fx.bands[i] = clampGain(v); save(); },
+    })));
+    defs.push({
+      kind: "preset",
+      label: ru ? "Усиление речи" : "Dialogue boost",
+      text: () => [ru ? "выкл" : "off", ru ? "слабое" : "low", ru ? "среднее" : "medium", ru ? "сильное" : "high"][fx.dialogue],
+      step: (dir) => { fx.dialogue = (fx.dialogue + dir + 4) % 4; save(); },
+    });
+    defs.push({
+      kind: "preset",
+      label: ru ? "Ночной режим" : "Night mode",
+      text: () => (fx.night ? (ru ? "вкл" : "on") : (ru ? "выкл" : "off")) + (fx.night && currentProfile(L) === "night" ? (ru ? " (уже в профиле)" : " (already in profile)") : ""),
+      step: () => { fx.night = !fx.night; save(); },
+    });
+    defs.push({ kind: "reset", label: ru ? "Сбросить всё" : "Reset all" });
+
+    const overlay = document.createElement("div");
+    overlay.className = "mpv-pick mpv-pic";
+    overlay.innerHTML = '<div class="mpv-pick__box"><div class="mpv-pick__title"></div><div class="mpv-pick__list"></div><div class="mpv-pick__hint"></div></div>';
+    overlay.querySelector(".mpv-pick__title").textContent = ru ? "Звук" : "Audio";
+    overlay.querySelector(".mpv-pick__hint").textContent = ru
+      ? "↑ ↓ выбор · ← → изменить (Shift — точнее) · 0 — в ноль · R — сброс · Esc. Не действует на звук, который передаётся без декодирования"
+      : "↑ ↓ select · ← → change (Shift — finer) · 0 — zero · R — reset · Esc. Has no effect on audio passed through undecoded";
+    const list = overlay.querySelector(".mpv-pick__list");
+
+    let index = 0;
+    const rows = defs.map((def, i) => {
+      const row = document.createElement("div");
+      row.className = "mpv-pic__row";
+      const label = document.createElement("span");
+      label.textContent = def.label;
+      const val = document.createElement("span");
+      val.className = "mpv-pic__val";
+      row.appendChild(label);
+      def.val = val;
+      if (def.kind === "slider") {
+        const track = document.createElement("div");
+        track.className = "mpv-pic__track";
+        const fill = document.createElement("div");
+        fill.className = "mpv-pic__fill";
+        const zero = document.createElement("div");
+        zero.className = "mpv-pic__zero";
+        const knob = document.createElement("div");
+        knob.className = "mpv-pic__knob";
+        [fill, zero, knob].forEach((n) => track.appendChild(n));
+        row.appendChild(track);
+        def.fill = fill;
+        def.knob = knob;
+        const fromPointer = (e) => {
+          const r = track.getBoundingClientRect();
+          def.set(((e.clientX - r.left) / r.width) * 24 - 12);
+          paintAll();
+        };
+        track.addEventListener("pointerdown", (e) => { focus(i); track.setPointerCapture(e.pointerId); fromPointer(e); track.onpointermove = fromPointer; });
+        const release = () => { track.onpointermove = null; };
+        track.addEventListener("pointerup", release);
+        track.addEventListener("pointercancel", release);
+      } else {
+        row.appendChild(document.createElement("div"));
+        row.addEventListener("click", () => { focus(i); if (def.kind === "preset") { def.step(1); paintAll(); } else resetAll(); });
+      }
+      row.appendChild(val);
+      row.addEventListener("click", () => focus(i));
+      list.appendChild(row);
+      def.row = row;
+      return row;
+    });
+
+    function focus(i) {
+      index = (i + rows.length) % rows.length;
+      rows.forEach((r, k) => r.classList.toggle("focus", k === index));
+    }
+    function paint(def) {
+      if (def.kind === "reset") { def.val.textContent = "R"; return; }
+      if (def.kind === "preset") { def.val.textContent = "‹ " + def.text() + " ›"; return; }
+      const v = def.value();
+      const pct = ((v + 12) / 24) * 100;
+      def.fill.style.left = Math.min(50, pct) + "%";
+      def.fill.style.width = Math.abs(pct - 50) + "%";
+      def.knob.style.left = pct + "%";
+      def.val.textContent = (v > 0 ? "+" : "") + v + (ru ? " дБ" : " dB");
+    }
+    function paintAll() { defs.forEach(paint); }
+    function resetAll() {
+      fx.bands = EQ_BANDS.map(() => 0);
+      fx.dialogue = 0;
+      fx.night = false;
+      L.Storage.set(AUDIOFX_SETTING, "");
+      applyAudioFx(L);
+      paintAll();
+      showToast(ru ? "Звук сброшен" : "Audio reset");
+    }
+
+    const close = () => {
+      pictureCloser = null;
+      clearTimeout(timer);
+      window.removeEventListener("keydown", onKey, true);
+      overlay.remove();
+      // keyup закрывающей клавиши не должен дойти до Lampa (Enter поставил бы паузу).
+      const t = setTimeout(release, 1000);
+      function release() { clearTimeout(t); window.removeEventListener("keyup", swallow, true); window.removeEventListener("keypress", swallow, true); }
+      swallowDone = (e) => { if (e.type === "keyup") setTimeout(release, 0); };
+    };
+    let swallowDone = null;
+    function swallow(e) { e.preventDefault(); e.stopImmediatePropagation(); if (swallowDone) swallowDone(e); }
+    function onKey(e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const def = defs[index];
+      const dir = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (e.key === "ArrowUp") focus(index - 1);
+      else if (e.key === "ArrowDown") focus(index + 1);
+      else if (dir && def.kind === "slider") { def.set(def.value() + dir * (e.shiftKey ? 1 : 2)); paintAll(); }
+      else if (dir && def.kind === "preset") { def.step(dir); paintAll(); }
+      else if (e.repeat) return;
+      else if (e.key === "0" && def.kind === "slider") { def.set(0); paintAll(); }
+      else if (e.code === "KeyR" || (e.key === "Enter" && def.kind === "reset")) resetAll();
+      else if (e.key === "Enter" && def.kind === "preset") { def.step(1); paintAll(); }
+      else if (e.key === "Escape" || e.key === "Backspace" || e.key === "BrowserBack" || e.code === "KeyE" || e.key === "Enter") close();
+    }
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", swallow, true);
+    window.addEventListener("keypress", swallow, true);
+    pictureCloser = close;
+    document.body.appendChild(overlay);
+    paintAll();
+    focus(0);
+  }
+
+  // ---- Локальные файлы ----
+  // Файлы выбирает приложение (меню «Открыть видео…», перетаскивание в окно, «Открыть с помощью»): оно же запоминает
+  // их пути, и мост открывает file:// только из этого списка, поэтому страница или плагин не могут читать другие файлы.
+  // Здесь файлы становятся обычным плейлистом Lampa: дальше работают все функции плеера (дорожки, главы, статистика).
+  function installLocalFiles(L) {
+    window.__lampyrisOpenLocal = (items) => {
+      if (!L.Player || !L.Player.play || !Array.isArray(items) || !items.length) return "no-lampa";
+      if (!mpvEnabled(L)) return "mpv-off";
+      const list = items.map((it) => {
+        const item = { title: String(it.title || ""), url: String(it.url || ""), local: true };
+        try {
+          if (L.Utils && L.Utils.hash && L.Timeline && L.Timeline.view) item.timeline = L.Timeline.view(L.Utils.hash(item.title));
+        } catch (e) { /* без запоминания места просмотра */ }
+        return item;
+      });
+      try {
+        if (list.length > 1 && L.Player.playlist) L.Player.playlist(list);
+        L.Player.play(list[0]);
+        return "ok";
+      } catch (e) {
+        console.log(`[mpv] локальный файл не открылся: ${e}`);
+        return "error";
+      }
+    };
+  }
+
+  // ---- Таймер сна (клавиша T) и вопрос «Вы ещё смотрите?» ----
+  // Таймер ставит на паузу через выбранное время (один раз, потом выключается); клавиша T листает 15, 30, 45, 60, 90 минут и «выкл».
+  const SLEEP_STEPS = [0, 15, 30, 45, 60, 90];
+  let sleepIndex = 0;
+  let sleepTimeout = null;
+  let sleepEndsAt = 0;
+  function cycleSleepTimer(L) {
+    const ru = ruLang(L);
+    sleepIndex = (sleepIndex + 1) % SLEEP_STEPS.length;
+    clearTimeout(sleepTimeout);
+    sleepTimeout = null;
+    const min = SLEEP_STEPS[sleepIndex];
+    if (!min) {
+      sleepEndsAt = 0;
+      return showToast(ru ? "Таймер сна выключен" : "Sleep timer off");
+    }
+    sleepEndsAt = Date.now() + min * 60000;
+    sleepTimeout = setTimeout(() => {
+      sleepTimeout = null;
+      sleepIndex = 0;
+      sleepEndsAt = 0;
+      if (!active || !document.documentElement.classList.contains(CLASS)) return;
+      if (active.__pauseExternal) active.__pauseExternal();
+      showToast(ru ? "Таймер сна: пауза" : "Sleep timer: paused", 6000);
+    }, min * 60000);
+    showToast((ru ? "Таймер сна: пауза через " : "Sleep timer: pause in ") + min + (ru ? " мин" : " min"));
+  }
+
+  // Серии подряд без участия человека: любое нажатие, касание или колесо между открытиями сбрасывает счётчик.
+  let autoEpisodes = 0;
+  let inputSinceOpen = false;
+  function installActivityTracker() {
+    const mark = () => { inputSinceOpen = true; };
+    ["keydown", "pointerdown", "wheel"].forEach((t) => window.addEventListener(t, mark, true));
+  }
+  // Вызывается при каждом новом (не повторном) открытии видео; true — пора спросить.
+  function stillWatchingDue(L) {
+    if (String(L.Storage.get(STILL_SETTING, "off")) !== "on") { autoEpisodes = 0; inputSinceOpen = false; return false; }
+    autoEpisodes = inputSinceOpen ? 0 : autoEpisodes + 1;
+    inputSinceOpen = false;
+    if (autoEpisodes < 3) return false;
+    autoEpisodes = 0;
+    return true;
   }
 
   // ---- Окно «Субтитры» (клавиша Y, кнопка на панели): вид и режим онлайн-поиска ----
@@ -1442,7 +1805,9 @@
       [["S"], "Скриншот", "Сохраняет текущий кадр в папку «Изображения/Lampyris» (PNG, в размере картинки на экране)."],
       [["I"], "Статистика", "Окно с кодеками, декодером, пропущенными кадрами, сетью, буфером и данными торрента. Повторное нажатие закрывает."],
       [["P"], "Профиль mpv", "Выбор набора опций из mpv.conf. Применяется сразу и запоминается."],
-      [["C"], "Картинка", "Ползунки гаммы, яркости, контраста и насыщенности для ручной подстройки (например, тёмного видео) и «Автокоррекция SDR» (свои гамма и насыщенность, только для SDR-видео, не HDR). Значения запоминаются и ставятся при каждом открытии видео; «Сбросить всё» возвращает профиль."],
+      [["C"], "Картинка", "Пресеты (Яркая, Кино, Светлая, Тёмная комната), ползунки гаммы, яркости, контраста и насыщенности для ручной подстройки (например, тёмного видео) и «Автокоррекция SDR» (свои гамма и насыщенность, только для SDR-видео, не HDR). Значения запоминаются и ставятся при каждом открытии видео; «Сбросить всё» возвращает профиль."],
+      [["T"], "Таймер сна", "Пауза через 15, 30, 45, 60 или 90 минут; повторное нажатие выбирает следующее значение, после 90 минут таймер выключается. Срабатывает один раз."],
+      [["E"], "Звук", "Эквалайзер на 10 полос (пресеты «Фильм», «Голос», «Бас», «Высокие», «ТВ»), усиление речи и ночной режим (сжатие громкости). Значения запоминаются; профиль «night» уже сжимает громкость, при нём ночной режим из этого окна не добавляется. Не действует на звук без декодирования (passthrough)."],
       [["Y"], "Вид субтитров", "Размер, положение, цвет, фон, обводка, тень, шрифт, отступ снизу и режим поиска в интернете. Пример субтитра показывается поверх видео. Те же значения, что в «Настройки → MPV». Есть и кнопка на панели плеера."],
       [["V"], "Картинка", "То же, что C. Есть и кнопка на панели плеера."],
       [["A"], "Следующая озвучка", "Переключает звуковую дорожку по кругу и показывает её название. Выбор запоминается для сериала."],
@@ -1462,7 +1827,9 @@
       [["S"], "Screenshot", "Saves the current frame to Pictures/Lampyris (PNG, at the on-screen picture size)."],
       [["I"], "Statistics", "Window with codecs, decoder, dropped frames, network, buffer and torrent data. Press again to close."],
       [["P"], "mpv profile", "Pick a set of options from mpv.conf. Applies immediately and is remembered."],
-      [["C"], "Picture", "Sliders for gamma, brightness, contrast and saturation for manual tuning (for example, a dark video), and “SDR auto-correction” (its own gamma and saturation, only for SDR video, not HDR). Values are remembered and set whenever a video opens; “Reset all” brings back the profile."],
+      [["C"], "Picture", "Presets (Vivid, Cinema, Bright, Dark room), sliders for gamma, brightness, contrast and saturation for manual tuning (for example, a dark video), and “SDR auto-correction” (its own gamma and saturation, only for SDR video, not HDR). Values are remembered and set whenever a video opens; “Reset all” brings back the profile."],
+      [["T"], "Sleep timer", "Pause after 15, 30, 45, 60 or 90 minutes; each press picks the next value, after 90 minutes the timer turns off. Fires once."],
+      [["E"], "Audio", "10-band equalizer (presets Film, Voice, Bass, Treble, TV), dialogue boost and night mode (loudness compression). Values are remembered; the “night” profile already compresses loudness, so the window’s night mode is not added on top of it. No effect on audio passed through undecoded."],
       [["Y"], "Subtitle style", "Size, position, color, background, outline, shadow, font, bottom margin and the online search mode. A sample subtitle is shown over the video. The same values as in Settings → MPV. A panel button does the same."],
       [["V"], "Picture", "Same as C. A panel button does the same."],
       [["A"], "Next audio track", "Cycles the audio track and shows its name. The choice is remembered for the series."],
@@ -1577,6 +1944,8 @@
         KeyX: () => changeDelay(L, "sub-delay", 0.1, "Задержка субтитров", "Subtitle delay"),
         KeyS: () => !event.repeat && takeScreenshot(L),
         KeyI: () => !event.repeat && toggleStatsPanel(L),
+        KeyE: () => !event.repeat && openAudioFx(L),
+        KeyT: () => !event.repeat && cycleSleepTimer(L),
         KeyC: () => !event.repeat && openPicture(L),
         KeyV: () => !event.repeat && openPicture(L),
         KeyY: () => !event.repeat && openSubStyle(L),
@@ -2151,6 +2520,8 @@
     // Онлайн-плагины передают в playdata только season/episode, без карточки, поэтому карточку берём
     // из активной страницы Lampa (экран фильма/сериала, поверх которого открыт плеер).
     function activeCard() {
+      // Локальный файл не относится к открытой карточке Lampa: ни таймкоды, ни запомненные дорожки к нему не привязываем.
+      if (/^file:/i.test(state.src || "")) return null;
       try {
         const a = L.Activity && L.Activity.active && L.Activity.active();
         return (a && (a.card || a.movie)) || null;
@@ -2508,6 +2879,7 @@
         state.chapters = Array.isArray(list) ? list.filter((c) => Number.isFinite(Number(c.time))) : [];
         renderChapterMarks();
         if (state.chapters.length) console.log(`[mpv] chapters: ${state.chapters.length}`);
+        skipFromChapters();
       }).catch(() => {});
     }
     el.__chapter = (dir) => {
@@ -2604,7 +2976,7 @@
       credits: ["Пропустить титры", "Skip credits"],
       preview: ["Пропустить анонс", "Skip preview"],
     };
-    const skip = { segments: [], current: null, done: new Set(), shownFor: null, session: 0 };
+    const skip = { segments: [], current: null, done: new Set(), shownFor: null, session: 0, tidb: false };
 
     // Что искать: фильм — по TMDB-id; серия — ещё сезон и номер. Неопределённую серию не гадаем.
     function skipLookup() {
@@ -2630,6 +3002,7 @@
 
     function skipReset() {
       skip.segments = [];
+      skip.tidb = false;
       skip.current = null;
       skip.done.clear();
       skip.shownFor = null;
@@ -2657,10 +3030,31 @@
           }
         }
         skip.segments = list;
+        skip.tidb = list.length > 0;
+        if (!skip.tidb) skipFromChapters();
         console.log(`[tidb] tmdb=${q.id}${q.tv ? ` s${q.season}e${q.episode}` : ""}: сегментов ${list.length} (${list.map((x) => x.type).join(",")})`);
       } catch (e) {
         console.log(`[tidb] запрос не удался: ${e}`);
       }
+    }
+
+    // Частота экрана под частоту кадров (по настройке): приложение само подбирает режим и вернёт прежний.
+    async function matchDisplayRate() {
+      if (state.rateTried || String(L.Storage.get(REFRESH_SETTING, "off")) !== "on") return;
+      const fps = Number(await api.get("container-fps").catch(() => 0)) || Number(await api.get("estimated-vf-fps").catch(() => 0));
+      if (!(fps >= 10)) return;
+      state.rateTried = true;
+      state.rateSet = true;
+      api.displayRate(fps).catch(() => {});
+    }
+
+    // Запасной источник: главы файла с названиями «Opening», «Титры» и т. п. Таймкоды TheIntroDB важнее и их не заменяют.
+    function skipFromChapters() {
+      if (skip.tidb || String(L.Storage.get(SKIP_SETTING, "button")) === "off") return;
+      const list = chapterSegments(state.chapters, Number(state.duration) || 0);
+      if (!list.length) return;
+      skip.segments = list;
+      console.log(`[chapters] пропуск по главам: ${list.map((x) => x.type).join(",")}`);
     }
 
     function skipEnd(seg) {
@@ -2710,9 +3104,13 @@
         startSeekButtons(L);
         state.retries = 0;
         state.everLoaded = false;
+        state.rateTried = false;
         skipReset();
         skipFetch();
         renderHeader();
+        if (stillWatchingDue(L)) {
+          state.askStill = true;
+        }
         // Скорость и задержки mpv помнит между файлами: сбрасываем то, что меняли клавишами.
         if (speedTouched) { api.set("speed", 1); speedTouched = false; }
         if (delaysTouched) { api.set("audio-delay", 0); api.set("sub-delay", 0); delaysTouched = false; }
@@ -2764,10 +3162,17 @@
     // не дожидаясь ответа mpv. События pause от mpv, пришедшие до создания тюба, теряются.
     el.play = () => { state.paused = false; api.set("pause", false); return Promise.resolve(); };
     el.pause = () => { state.paused = true; api.set("pause", true); };
+    // Пауза не от пользователя (таймер сна, «Вы ещё смотрите?»): ставим её через плеер Lampa, иначе значок пуск/пауза не переключится
+    // (Lampa обновляет его только в своём pause()); он же вызовет el.pause().
+    el.__pauseExternal = () => {
+      if (L.PlayerVideo && L.PlayerVideo.pause) L.PlayerVideo.pause();
+      else { el.pause(); emit("pause"); }
+    };
     el.destroy = () => {
       if (state.destroyed) return;
       state.destroyed = true;
       if (active === el) active = null;
+      if (state.rateSet) api.displayRate(0).catch(() => {});
       document.documentElement.classList.remove(CLASS);
       stopSweep();
       stopProfileButton();
@@ -2819,6 +3224,7 @@
           // Картинка зависит от того, SDR видео или HDR: ставим заново, когда параметры сменились.
           const paramsKey = `${data.w}x${data.h}:${data.gamma}`;
           if (paramsKey !== state.picturedFor && window.Lampa) { state.picturedFor = paramsKey; applyPicture(window.Lampa); }
+          matchDisplayRate();
         } else if (name === "demuxer-cache-time" && state.duration > 0) {
           emit("progress", { percent: Math.round(Math.min(100, (Number(data) / state.duration) * 100)) });
         } else if (name === "aid" || name === "sid") {
@@ -2835,9 +3241,17 @@
         state.picturedFor = null;
         // Запасной вызов: если параметры нового видео совпали с прежними, событие video-params не придёт.
         setTimeout(() => { if (window.Lampa) applyPicture(window.Lampa); }, 300);
+        // Звуковые эффекты после профиля (он мог заменить цепочку af): метка отдельная, поэтому ставим заново.
+        setTimeout(() => { if (window.Lampa) applyAudioFx(window.Lampa); }, 700);
         state.loaded = true;
         state.everLoaded = true;
         api.set("mute", state.muted);
+        if (state.askStill) {
+          state.askStill = false;
+          const ru = ruLang(window.Lampa);
+          el.__pauseExternal();
+          showToast(ru ? "Вы ещё смотрите? Нажмите пробел, чтобы продолжить" : "Are you still watching? Press Space to continue", 15000);
+        }
         if (state.pendingSeek !== null) api.command(["seek", String(state.pendingSeek), "absolute+exact"]);
         state.pendingSeek = null;
         setTimeout(() => { state.tracksTimedOut = true; announceLoaded(false); }, 1500);
@@ -2875,13 +3289,14 @@
     addSettings(L);
     hideExternalMpv(L);
     installProfileHotkey(L);
+    installActivityTracker();
     installArrowKeys(L);
     installPlayerKeys(L);
     installPlayerWheel();
     L.PlayerVideo.registerTube({
       name: "mpv",
       // WebKit не играет, например, MKV; mpv берёт все http(s)/file-источники, пока включён в настройках.
-      verify: (src) => mpvEnabled(L) && /^https?:/i.test(String(src)),
+      verify: (src) => mpvEnabled(L) && /^(https?|file):/i.test(String(src)),
       create: (callback) => {
         addStyle();
         const shim = createShim(L);
@@ -2890,6 +3305,7 @@
         return $(shim);
       },
     });
+    installLocalFiles(L);
     console.log("[mpv] tube registered");
   });
 })();

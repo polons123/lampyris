@@ -82,3 +82,16 @@ const online = { type: "sub", id: 9, lang: "ru", title: "RU · Some.Release", ex
 eq(subPref(online).online, true, "онлайн-субтитры помечены");
 eq(subPref({ type: "sub", id: 3, lang: "rus", title: "Full", external: true }).online, false, "внешний файл сервера не онлайн");
 eq(matchSub([online, subs[1]], subPref(online)), undefined, "онлайн-выбор в новой серии не подменяем дорожкой");
+
+// Сегменты пропуска по названиям глав.
+const chs = [
+  { time: 0, title: "Chapter 1" },
+  { time: 10, title: "Opening" },
+  { time: 100, title: "Серия" },
+  { time: 1300, title: "Титры" },
+];
+eq(chapterSegments(chs, 1400), [{ type: "intro", start: 10, end: 100 }, { type: "credits", start: 1300, end: null }], "сегменты по главам");
+eq(chapterSegments(chs, 0), [{ type: "intro", start: 10, end: 100 }], "последняя глава без длительности пропускается");
+eq(chapterSegments([{ time: 0, title: "Operation" }, { time: 5, title: "Opening" }, { time: 6, title: "x" }], 100), [], "короткий сегмент и «Operation» не считаются");
+eq(chapterSegments(undefined, 100), [], "нет глав");
+if (failed) throw new Error("тесты не прошли: " + failed);

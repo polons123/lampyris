@@ -2,13 +2,39 @@ import AppKit
 import WebKit
 import LampyrisCore
 
+/// WKWebView, принимающий перетаскиваемые в окно видеофайлы (по умолчанию он бы попытался перейти на файл).
+final class DropWebView: WKWebView {
+    var onDropFiles: (([URL]) -> Void)?
+
+    private func files(_ info: NSDraggingInfo) -> [URL] {
+        (info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? [])
+            .filter { MpvBridge.localExtensions.contains($0.pathExtension.lowercased()) }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        files(sender).isEmpty ? super.draggingEntered(sender) : .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        files(sender).isEmpty ? super.draggingUpdated(sender) : .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let dropped = files(sender)
+        guard !dropped.isEmpty else { return super.performDragOperation(sender) }
+        onDropFiles?(dropped)
+        return true
+    }
+}
+
 @MainActor
 final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     private var url: URL
-    private let webView: WKWebView
+    private let webView: DropWebView
     private let videoView = MpvVideoView(videoFrame: NSRect(x: 0, y: 0, width: 1280, height: 720))
     private var player: MpvPlayer?
     private var bridge: MpvBridge?
+    private lazy var displaySwitcher = DisplayRateSwitcher(window: { [weak self] in self?.view.window })
     /// Источники, которым доверен мост mpv. Пополняется только пока идёт наша собственная загрузка
     /// адреса сервера (с редиректами); переход страницы на другой хост доверия не получает.
     private var trusted: Set<String> = []
@@ -33,11 +59,12 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         window.addEventListener('unhandledrejection',function(e){if(window.__lv)webkit.messageHandlers.dbg.postMessage('rejection: '+e.reason)});
         """
         config.userContentController.addUserScript(WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false))
-        webView = WKWebView(frame: .zero, configuration: config)
+        webView = DropWebView(frame: .zero, configuration: config)
         super.init(nibName: nil, bundle: nil)
         config.userContentController.add(self, name: "dbg")
         config.userContentController.add(self, name: "appError")
         webView.navigationDelegate = self
+        webView.onDropFiles = { [weak self] urls in MainActor.assumeIsolated { self?.openLocalVideos(urls) } }
         webView.setValue(false, forKey: "drawsBackground")  // видео рисуется под веб-видом
         webView.underPageBackgroundColor = .clear
         webView.uiDelegate = self
@@ -67,6 +94,7 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
             player = p
             let bridge = MpvBridge(player: p, webView: webView, trustedOrigins: { [weak self] in self?.trusted ?? [] })
             self.bridge = bridge
+            bridge.displayRate = { [weak self] fps in self?.displaySwitcher.match(fps: fps) }
             webView.configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "mpv")
             for name in ["playbackCover", "mpvTube"] {
                 if let url = Self.resourceURL(name, "js"),
@@ -92,7 +120,53 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         Bundle.main.url(forResource: name, withExtension: ext) ?? Bundle.module.url(forResource: name, withExtension: ext)
     }
 
-    func shutdownPlayer() { player?.shutdown() }
+    func shutdownPlayer() {
+        displaySwitcher.restore()
+        player?.shutdown()
+    }
+
+    /// Файлы, пришедшие до готовности страницы (запуск через «Открыть с помощью»): пробуем, пока страница не загрузится.
+    private var pendingFiles: [URL] = []
+    private var pendingAttempts = 0
+
+    /// Открывает выбранные пользователем файлы плейлистом Lampa (проигрывает mpv). Если страница ещё не готова, ждёт её до 30 секунд.
+    func openLocalVideos(_ urls: [URL]) {
+        pendingFiles = urls
+        pendingAttempts = 0
+        tryOpenPending()
+    }
+
+    private func tryOpenPending() {
+        guard !pendingFiles.isEmpty, let bridge else { return }
+        let urls = pendingFiles
+        bridge.openLocalFiles(urls) { [weak self] answer in
+            guard let self else { return }
+            switch answer {
+            case "ok", "no-files":
+                self.pendingFiles = []
+            case "mpv-off":
+                self.pendingFiles = []
+                Self.alert(tr("Включите «Использовать mpv для видео» в настройках MPV: встроенный плеер WebKit не открывает такие файлы.",
+                              "Turn on “Use mpv for video” in the MPV settings: the built-in WebKit player cannot open these files."))
+            default:
+                // Страница ещё грузится или Lampa не готова: повторяем раз в 1,5 с.
+                self.pendingAttempts += 1
+                if self.pendingAttempts > 20 {
+                    self.pendingFiles = []
+                    Self.alert(tr("Не удалось открыть файл: страница Lampa не готова.", "Could not open the file: the Lampa page is not ready."))
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { MainActor.assumeIsolated { self.tryOpenPending() } }
+                }
+            }
+        }
+    }
+
+    private static func alert(_ text: String) {
+        let a = NSAlert()
+        a.messageText = "Lampyris"
+        a.informativeText = text
+        a.runModal()
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
