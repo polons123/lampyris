@@ -66,5 +66,8 @@ swift test              # mpv.conf parsing and URL shortening in the log (Lampyr
 
 To publish a release, bump the number in `scripts/VERSION`, commit and push a tag like `v0.1.0`: CI builds both variants and publishes a release with `.dmg`, `.zip` and `SHA256SUMS.txt`. To push workflow files via `gh`, the token needs the `workflow` scope (`gh auth refresh -h github.com -s workflow`).
 
+## Thanks
+Thanks to [@XEGARE](https://github.com/XEGARE) for testing the Windows version and detailed bug reports, and to [@Kaorius](https://github.com/Kaorius) for reporting the non-working "Minimize" (picture-in-picture) button in the player.
+
 ## License
 GNU GPL version 3 or later (GPL-3.0-or-later), see [LICENSE](LICENSE). Information about third-party components and services is in [THIRD-PARTY.md](THIRD-PARTY.md).
