@@ -351,6 +351,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
 
                 }
                 case "stop":stopPlayback();break;
+                case "pip":{if(!playing)throw new Exception("No video");result=enterPictureInPictureMode(new PictureInPictureParams.Builder().setAspectRatio(new android.util.Rational(16,9)).build());break;}
                 case "audioFx": {
                     JSONObject d=a.getJSONObject(0);JSONArray b=d.optJSONArray("bands");int[] bands=new int[b==null?0:Math.min(b.length(),AudioFx.BAND_FREQUENCIES.length)];
                     for(int i=0;i<bands.length;i++)bands[i]=(int)b.optDouble(i,0);
@@ -438,6 +439,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
     @Override public void surfaceChanged(SurfaceHolder h,int format,int w,int height){if(initialized)MPVLib.setPropertyString("android-surface-size",w+"x"+height);}
     @Override public void surfaceDestroyed(SurfaceHolder h){surfaceAvailable=false;if(initialized){if(playing&&suspendedVideo==null){suspendedVideo=MPVLib.getPropertyString("vid");if(suspendedVideo==null)suspendedVideo="auto";MPVLib.setPropertyString("vid","no");}MPVLib.setPropertyString("vo","null");MPVLib.detachSurface();}}
     @Override protected void onPause(){super.onPause();}
+    // В окне PiP остаётся одно видео: интерфейс Lampa там нечитаем и закрывает картинку.
+    @Override public void onPictureInPictureModeChanged(boolean inPip,android.content.res.Configuration config){super.onPictureInPictureModeChanged(inPip,config);if(web!=null)web.setVisibility(inPip?View.INVISIBLE:View.VISIBLE);}
     @Override public boolean onKeyDown(int key,KeyEvent event){
         if(isTv()&&event.getRepeatCount()==0&&key==KeyEvent.KEYCODE_MENU){menu();return true;}
         if(playing&&key==KeyEvent.KEYCODE_INFO){if(event.getRepeatCount()==0)web.evaluateJavascript("window.dispatchEvent(new KeyboardEvent('keydown',{key:'i',code:'KeyI',bubbles:true}))",null);return true;}

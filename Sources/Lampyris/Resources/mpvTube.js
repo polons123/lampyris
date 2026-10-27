@@ -994,6 +994,25 @@
     }).catch(() => {});
   }
 
+  // Кнопка «картинка в картинке» плеера Lampa рассчитана на элемент video, а играет mpv: переименовываем её в PiP
+  // и отдаём нажатие приложению (window.__lampyrisPip задаёт каждая платформа).
+  function installPipButton() {
+    if (typeof window.__lampyrisPip !== "function") return;
+    setInterval(() => {
+      const btn = document.querySelector(".player-panel__pip");
+      if (!btn) return;
+      // Lampa прячет кнопку, если браузер не умеет PiP для video; здесь PiP делает приложение.
+      btn.classList.remove("hide");
+      if (btn.__lampyrisPip) return;
+      btn.__lampyrisPip = true;
+      const tip = btn.querySelector(".tooltip");
+      if (tip) tip.textContent = "PiP";
+      btn.setAttribute("title", "PiP");
+      btn.addEventListener("click", (event) => { event.preventDefault(); event.stopImmediatePropagation(); window.__lampyrisPip(); }, true);
+      if (window.$) window.$(btn).on("hover:enter", () => window.__lampyrisPip());
+    }, 500);
+  }
+
   // Горячая клавиша P (и «з» в русской раскладке): окно выбора профиля, пока играет mpv.
   function installProfileHotkey(L) {
     window.addEventListener("keydown", (event) => {
@@ -3294,6 +3313,7 @@
     addSettings(L);
     hideExternalMpv(L);
     installProfileHotkey(L);
+    installPipButton();
     installActivityTracker();
     installArrowKeys(L);
     installPlayerKeys(L);

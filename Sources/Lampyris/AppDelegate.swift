@@ -74,12 +74,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private static let frameName = "MainWindow"
     private static let fullScreenKey = "windowFullScreen"
 
+    /// Закрытие окна в режиме PiP только выходит из него и останавливает видео.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard let web = webController, web.inPictureInPicture else { return true }
+        web.closePictureInPicture()
+        return false
+    }
+
     func windowDidEnterFullScreen(_ notification: Notification) {
         UserDefaults.standard.set(true, forKey: Self.fullScreenKey)
+        webController?.reportFullscreen(true)
     }
 
     func windowDidExitFullScreen(_ notification: Notification) {
         UserDefaults.standard.set(false, forKey: Self.fullScreenKey)
+        webController?.reportFullscreen(false)
     }
 
     @objc func changeServer() { webController?.changeServer() }
@@ -442,6 +451,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func applicationWillTerminate(_ notification: Notification) {
         player?.shutdown()
+        webController?.endPictureInPicture()
         webController?.shutdownPlayer()
     }
 

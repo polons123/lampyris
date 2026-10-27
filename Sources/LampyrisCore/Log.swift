@@ -38,7 +38,7 @@ public enum Log {
         if verboseOnly && !verbose { return }
         if debugEnv { print("[\(category)] \(message)") }
         if !verboseOnly {
-            let line = "[\(category)] \(message)"
+            let line = sanitize("[\(category)] \(message)")
             switch level {
             case .info: logger.info("\(line, privacy: .public)")
             case .warn: logger.warning("\(line, privacy: .public)")
@@ -58,10 +58,10 @@ public enum Log {
         return f.string(from: Date())
     }
 
-    /// Адреса http(s) сокращаются до схемы и хоста: токены и ключи бывают и в пути, и в запросе.
+    /// Адреса http(s) сокращаются до схемы и хоста: токены и ключи бывают и в пути, и в запросе, и в user:password@.
     static func sanitize(_ s: String) -> String {
-        guard let re = try? NSRegularExpression(pattern: #"(https?://[^/\s"'<>)\]]+)[^\s"'<>)\]]*"#) else { return s }
-        return re.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "$1/…")
+        guard let re = try? NSRegularExpression(pattern: #"(https?://)(?:[^/?#\s"'<>)\]@]*@)?([^/?#\s"'<>)\]]+)[^\s"'<>)\]]*"#) else { return s }
+        return re.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: "$1$2/…")
     }
 
     private static func append(_ text: String) {

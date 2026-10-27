@@ -21,4 +21,12 @@ struct LogTests {
         let text = "[mpv] событий за 5 с: от mpv 138, на страницу 31"
         #expect(Log.sanitize(text) == text)
     }
+
+    @Test("параметры сразу после хоста, учётные данные, решётка не остаются")
+    func credentialsAndBareQuery() {
+        #expect(Log.sanitize("GET https://host.example?token=SECRET done") == "GET https://host.example/… done")
+        #expect(Log.sanitize("https://host.example#key=SECRET") == "https://host.example/…")
+        #expect(Log.sanitize("https://user:pa55@host.example:8443/path?x=1") == "https://host.example:8443/…")
+        #expect(Log.sanitize("http://user@10.0.0.5?k=v") == "http://10.0.0.5/…")
+    }
 }

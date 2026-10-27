@@ -128,6 +128,8 @@ struct WinState {
     h: u32,
     maximized: bool,
     fullscreen: bool,
+    /// Режим «картинка в картинке»: маленькое окно не должно становиться запомненным размером.
+    pip: bool,
 }
 
 impl WinState {
@@ -140,6 +142,7 @@ impl WinState {
             h: v["h"].as_u64()? as u32,
             maximized: v["maximized"].as_bool().unwrap_or(false),
             fullscreen: v["fullscreen"].as_bool().unwrap_or(false),
+            pip: false,
         })
     }
 
@@ -159,7 +162,7 @@ impl WinState {
 
     /// Запоминаем обычное (не развёрнутое и не полноэкранное) положение.
     fn track(&mut self, window: &Window) {
-        if window.is_maximized() || window.is_minimized() || window.fullscreen().is_some() {
+        if self.pip || window.is_maximized() || window.is_minimized() || window.fullscreen().is_some() {
             return;
         }
         let (size, pos) = (window.inner_size(), window.outer_position());
@@ -423,9 +426,10 @@ fn main() {
         use windows::Win32::UI::WindowsAndMessaging::{SetClassLongPtrW, GCLP_HBRBACKGROUND};
         SetClassLongPtrW(HWND(hwnd as *mut _), GCLP_HBRBACKGROUND, GetStockObject(BLACK_BRUSH).0 as isize);
     }
-    let mut win_state = saved.unwrap_or(WinState { x: 0, y: 0, w: 0, h: 0, maximized: false, fullscreen: false });
+    let mut win_state = saved.unwrap_or(WinState { x: 0, y: 0, w: 0, h: 0, maximized: false, fullscreen: false, pip: false });
     let start_fullscreen = saved.map(|w| w.fullscreen).unwrap_or(false);
     let is_full = Rc::new(Cell::new(false));
+    let is_pip = Rc::new(Cell::new(false));
 
     let now_playing = match smtc::NowPlaying::new(proxy.clone()) {
         Ok(np) => Some(np),
@@ -545,7 +549,7 @@ fn main() {
             }
         })
         .with_on_page_load_handler({
-            let (bridge, loading_own, proxy, is_full, pending_lampa) = (bridge.clone(), loading_own.clone(), proxy.clone(), is_full.clone(), pending_lampa.clone());
+            let (bridge, loading_own, proxy, is_full, is_pip, pending_lampa) = (bridge.clone(), loading_own.clone(), proxy.clone(), is_full.clone(), is_pip.clone(), pending_lampa.clone());
             move |event, _| match event {
                 // Новый документ в главном кадре: прежняя страница (а с ней и её тюб) уничтожена, плеер без неё не нужен.
                 PageLoadEvent::Started => { if let Some(b) = &bridge { b.page_did_reset(); } }
@@ -554,6 +558,7 @@ fn main() {
                     if pending_lampa.borrow().is_some() { let _ = proxy.send_event(UserEvent::ApplyPendingLampa); }
                     // Страница не знает, что окно уже в полном экране (восстановлено при запуске или осталось с прошлой страницы).
                     if is_full.get() { let _ = proxy.send_event(UserEvent::Js("window.__setFullscreen&&window.__setFullscreen(true)".into())); }
+                    if is_pip.get() { let _ = proxy.send_event(UserEvent::Js("window.__setPip&&window.__setPip(true)".into())); }
                 }
             }
         })
@@ -675,6 +680,10 @@ fn main() {
 
     let mut current = server;
     let mut switcher = display_rate::Switcher::default();
+    // Окно запоминаем не только при выходе: диспетчер задач или аварийный сбой не пришлют CloseRequested.
+    // Положение и размер окна до входа в «картинку в картинке».
+    let mut pip_prev: Option<(PhysicalPosition<i32>, PhysicalSize<u32>, bool, bool)> = None;
+    let mut win_dirty: Option<std::time::Instant> = None;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
@@ -719,6 +728,12 @@ fn main() {
                 UserEvent::Window(args) => match args.first().and_then(|v| v.as_str()) {
                     Some("fullscreen") => {
                         let on = match args.get(1) { Some(Value::Bool(b)) => *b, _ => window.fullscreen().is_none() };
+                        // Полный экран из PiP: сначала возвращаем обычное окно, потом разворачиваем его.
+                        if on && pip_prev.is_some() {
+                            let _ = proxy.send_event(UserEvent::Window(vec![Value::from("pip"), Value::Bool(false)]));
+                            let _ = proxy.send_event(UserEvent::Window(args));
+                            return;
+                        }
                         win_state.track(&window);
                         window.set_fullscreen(if on { Some(Fullscreen::Borderless(None)) } else { None });
                         if !on { switcher.restore(); }
@@ -726,6 +741,59 @@ fn main() {
                         let _ = unsafe { if on { menu.hide_for_hwnd(hwnd) } else { menu.show_for_hwnd(hwnd) } };
                         let _ = webview.evaluate_script(&format!("window.__setFullscreen&&window.__setFullscreen({on})"));
                     }
+                    Some("pip") => {
+                        let on = match args.get(1) { Some(Value::Bool(b)) => *b, _ => pip_prev.is_none() };
+                        if on && pip_prev.is_none() {
+                            // Из полного экрана выходим сразу здесь (а не событием в очереди): иначе оно позже вернёт окну обычный размер поверх PiP.
+                            let was_full = window.fullscreen().is_some();
+                            let was_max = window.is_maximized();
+                            win_state.track(&window);
+                            if was_full {
+                                window.set_fullscreen(None);
+                                switcher.restore();
+                                is_full.set(false);
+                                let _ = unsafe { menu.show_for_hwnd(hwnd) };
+                                let _ = webview.evaluate_script("window.__setFullscreen&&window.__setFullscreen(false)");
+                            }
+                            if was_max { window.set_maximized(false); }
+                            // Обычное положение окна до полного экрана или разворота хранит win_state (track не обновляет его в этих режимах).
+                            let (pos, size) = if (was_full || was_max) && win_state.w > 0 {
+                                (PhysicalPosition::new(win_state.x, win_state.y), PhysicalSize::new(win_state.w, win_state.h))
+                            } else {
+                                (window.outer_position().unwrap_or_default(), window.inner_size())
+                            };
+                            pip_prev = Some((pos, size, was_max, window.is_always_on_top()));
+                            win_state.pip = true;
+                            // Без меню и рамки окна: двигается перетаскиванием за картинку (см. window.js).
+                            let _ = unsafe { menu.hide_for_hwnd(hwnd) };
+                            window.set_decorations(false);
+                            let scale = window.scale_factor();
+                            let w = (480.0 * scale) as u32;
+                            let h = (270.0 * scale) as u32;
+                            window.set_inner_size(PhysicalSize::new(w, h));
+                            if let Some(m) = window.current_monitor() {
+                                let (mp, ms) = (m.position(), m.size());
+                                let (mx, my) = (16.0 * scale, 64.0 * scale);
+                                window.set_outer_position(PhysicalPosition::new(mp.x + ms.width as i32 - w as i32 - mx as i32, mp.y + ms.height as i32 - h as i32 - my as i32));
+                            }
+                            window.set_always_on_top(true);
+                            top_item.set_checked(true);
+                        } else if !on {
+                            if let Some((pos, size, was_max, was_top)) = pip_prev.take() {
+                                win_state.pip = false;
+                                window.set_decorations(true);
+                                if window.fullscreen().is_none() { let _ = unsafe { menu.show_for_hwnd(hwnd) }; }
+                                window.set_always_on_top(was_top);
+                                top_item.set_checked(was_top);
+                                window.set_inner_size(size);
+                                window.set_outer_position(pos);
+                                if was_max { window.set_maximized(true); }
+                            }
+                        }
+                        is_pip.set(pip_prev.is_some());
+                        let _ = webview.evaluate_script(&format!("window.__setPip&&window.__setPip({})", pip_prev.is_some()));
+                    }
+                    Some("dragWindow") => { if pip_prev.is_some() { let _ = window.drag_window(); } }
                     Some("reload") => { let _ = proxy.send_event(UserEvent::Load); }
                     Some("openVideo") => {
                         let files = filedialog::open_videos(hwnd, tr("Открыть видео", "Open video"));
@@ -964,7 +1032,10 @@ fn main() {
                     _ => {}
                 },
             },
-            Event::WindowEvent { event: WindowEvent::Moved(_) | WindowEvent::Resized(_), .. } => win_state.track(&window),
+            Event::WindowEvent { event: WindowEvent::Moved(_) | WindowEvent::Resized(_), .. } => {
+                win_state.track(&window);
+                win_dirty = Some(std::time::Instant::now());
+            }
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 switcher.restore();
                 if let Some(p) = &player { p.shutdown(); }
@@ -974,6 +1045,17 @@ fn main() {
                 *control_flow = ControlFlow::Exit;
             }
             _ => {}
+        }
+        if let (Some(since), ControlFlow::Wait) = (win_dirty, *control_flow) {
+            let due = since + std::time::Duration::from_millis(500);
+            if std::time::Instant::now() >= due {
+                win_dirty = None;
+                win_state.maximized = window.is_maximized();
+                win_state.fullscreen = window.fullscreen().is_some();
+                if win_state.w > 0 { win_state.save(); }
+            } else {
+                *control_flow = ControlFlow::WaitUntil(due);
+            }
         }
     });
 }

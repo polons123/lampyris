@@ -3,7 +3,9 @@
 //    requestFullscreen/exitFullscreen/fullscreenElement подменены и переключают окно приложения.
 // 2) Клавиши окна: F11 и Alt+Enter (полный экран), Esc (выход из полного экрана), F5 и Ctrl+R (перезагрузка),
 //    Ctrl+, (адрес сервера), Ctrl+O (открыть видео с диска).
-// 3) Консоль страницы в журнал при включённом подробном журнале (флаг window.__lv).
+// 3) Картинка в картинке: у Lampa кнопка PiP рассчитана на элемент video, а видео играет mpv, поэтому кнопка
+//    переключает режим маленького окна поверх других окон.
+// 4) Консоль страницы в журнал при включённом подробном журнале (флаг window.__lv).
 (function () {
   if (window.__lampyrisWindow) return;
   window.__lampyrisWindow = true;
@@ -48,6 +50,30 @@
     else if (k === "F5" || (e.ctrlKey && !e.altKey && (k === "r" || k === "R"))) { stop(); send("window", ["reload"]); }
     else if (e.ctrlKey && !e.altKey && k === ",") { stop(); send("window", ["changeServer"]); }
     else if (e.ctrlKey && !e.altKey && (k === "o" || k === "O")) { stop(); send("window", ["openVideo"]); }
+  }, true);
+
+  var pipOn = false;
+  window.__setPip = function (on) { pipOn = !!on; };
+  function togglePip() { send("window", ["pip", !pipOn]); }
+  // Кнопку PiP плеера Lampa подключает mpvTube.js через эту функцию.
+  window.__lampyrisPip = togglePip;
+  // В PiP у окна нет рамки: двигаем его за любое место страницы.
+  // Окно двигается, только когда мышь потащили (чистый клик остаётся кнопкам плеера, в том числе выходу из PiP).
+  var dragFrom = null;
+  // Элементы управления (перемотка, меню, поля) окно не тащат: у них своё перетаскивание.
+  var CONTROLS = ".player-panel, .selectbox, .settings, .modal, .keyboard-input, input, textarea, select, button, a";
+  window.addEventListener("mousedown", function (e) {
+    var t = e.target && e.target.closest ? e.target : null;
+    dragFrom = pipOn && e.button === 0 && !(t && t.closest(CONTROLS)) ? [e.screenX, e.screenY] : null;
+  }, true);
+  window.addEventListener("mouseup", function () { dragFrom = null; }, true);
+  window.addEventListener("mousemove", function (e) {
+    if (!dragFrom || (e.buttons & 1) === 0) { dragFrom = null; return; }
+    if (Math.abs(e.screenX - dragFrom[0]) + Math.abs(e.screenY - dragFrom[1]) > 6) { dragFrom = null; send("window", ["dragWindow"]); }
+  }, true);
+  // Esc или закрытие плеера возвращают обычное окно.
+  window.addEventListener("keydown", function (e) {
+    if (pipOn && e.key === "Escape" && !e.altKey && !e.ctrlKey) { e.preventDefault(); e.stopImmediatePropagation(); send("window", ["pip", false]); }
   }, true);
 
   ["log", "warn", "error"].forEach(function (l) {

@@ -12,7 +12,7 @@
     <application android:banner="@drawable/tv_banner" android:label="Lampyris" android:icon="@drawable/ic_lampyris" android:theme="@android:style/Theme.Material.NoActionBar" android:allowBackup="false" android:usesCleartextTraffic="true">
         <receiver android:name=".UpdateResultReceiver" android:exported="false"/>
         <service android:name=".PlaybackService" android:exported="false" android:foregroundServiceType="mediaPlayback"/>
-        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:enableOnBackInvokedCallback="true" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboard|keyboardHidden|navigation|uiMode|locale|layoutDirection|fontScale|colorMode" android:windowSoftInputMode="adjustResize">
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop" android:supportsPictureInPicture="true" android:enableOnBackInvokedCallback="true" android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|density|keyboard|keyboardHidden|navigation|uiMode|locale|layoutDirection|fontScale|colorMode" android:windowSoftInputMode="adjustResize">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/></intent-filter>
             <!-- «Открыть с помощью» для видео и звука из файловых менеджеров. -->

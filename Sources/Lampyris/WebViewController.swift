@@ -48,7 +48,7 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         self.url = url
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
-        config.preferences.isElementFullscreenEnabled = true
+        config.preferences.isElementFullscreenEnabled = false
         config.mediaTypesRequiringUserActionForPlayback = []
         let debug = ProcessInfo.processInfo.environment["LAMPA_DEBUG"] != nil
         // Консоль страницы пересылается в журнал только при включённом подробном журнале (флаг window.__lv).
@@ -57,12 +57,32 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         ['log','warn','error'].forEach(function(l){var o=console[l];console[l]=function(){if(window.__lv){try{webkit.messageHandlers.dbg.postMessage(l+': '+Array.prototype.map.call(arguments,String).join(' '))}catch(e){}};o.apply(console,arguments)}});
         window.addEventListener('error',function(e){if(window.__lv)webkit.messageHandlers.dbg.postMessage('uncaught: '+e.message+' @'+e.filename+':'+e.lineno)});
         window.addEventListener('unhandledrejection',function(e){if(window.__lv)webkit.messageHandlers.dbg.postMessage('rejection: '+e.reason)});
+        (function(){
+          var fsEl=null,target=null;
+          function send(v){try{webkit.messageHandlers.appFullscreen.postMessage(v)}catch(e){}}
+          function fire(){var el=fsEl||target;['fullscreenchange','webkitfullscreenchange'].forEach(function(n){document.dispatchEvent(new Event(n));if(el&&el!==document)el.dispatchEvent(new Event(n,{bubbles:true}))})}
+          function def(proto,name,g){try{Object.defineProperty(proto,name,{get:g,configurable:true})}catch(e){}}
+          function enter(el){target=el||document.documentElement;send('on');return Promise.resolve()}
+          function exit(){send('off');return Promise.resolve()}
+          ['requestFullscreen','webkitRequestFullscreen','webkitRequestFullScreen'].forEach(function(n){Element.prototype[n]=function(){return enter(this)}});
+          ['exitFullscreen','webkitExitFullscreen','webkitCancelFullScreen'].forEach(function(n){Document.prototype[n]=exit});
+          ['fullscreenElement','webkitFullscreenElement','webkitCurrentFullScreenElement'].forEach(function(n){def(Document.prototype,n,function(){return fsEl})});
+          def(Document.prototype,'fullscreenEnabled',function(){return true});
+          def(Document.prototype,'webkitFullscreenEnabled',function(){return true});
+          def(Document.prototype,'webkitIsFullScreen',function(){return !!fsEl});
+          window.__setFullscreen=function(on){var was=!!fsEl;fsEl=on?(target||document.documentElement):null;if(was!==!!fsEl)fire();if(!on)target=null};
+        })();
+        window.addEventListener('mousedown',function(e){var t=e.target&&e.target.closest?e.target:null;try{webkit.messageHandlers.appPipNoDrag.postMessage(!!(t&&t.closest('.player-panel, .selectbox, .settings, .modal, .keyboard-input, input, textarea, select, button, a')))}catch(x){}},true);
+        window.__lampyrisPip=function(){webkit.messageHandlers.appPip.postMessage('toggle')};
         """
         config.userContentController.addUserScript(WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         webView = DropWebView(frame: .zero, configuration: config)
         super.init(nibName: nil, bundle: nil)
         config.userContentController.add(self, name: "dbg")
         config.userContentController.add(self, name: "appError")
+        config.userContentController.add(self, name: "appPip")
+        config.userContentController.add(self, name: "appPipNoDrag")
+        config.userContentController.add(self, name: "appFullscreen")
         webView.navigationDelegate = self
         webView.onDropFiles = { [weak self] urls in MainActor.assumeIsolated { self?.openLocalVideos(urls) } }
         webView.setValue(false, forKey: "drawsBackground")  // видео рисуется под веб-видом
@@ -173,6 +193,18 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     }
 
     func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
+        if m.name == "appFullscreen" {
+            if m.frameInfo.isMainFrame, let v = m.body as? String { setWindowFullscreen(v == "on") }
+            return
+        }
+        if m.name == "appPipNoDrag" {
+            pipPressOnControl = (m.body as? Bool) ?? false
+            return
+        }
+        if m.name == "appPip" {
+            if m.frameInfo.isMainFrame, m.body as? String == "toggle" { togglePictureInPicture() }
+            return
+        }
         if m.name == "appError" {
             // Кнопки страницы ошибки; принимаются только пока эта страница показана.
             guard showingError, let action = m.body as? String else { return }
@@ -184,6 +216,124 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
             return
         }
         Log.log(.info, "js", "\(m.body)", verboseOnly: true)
+    }
+
+    private var pipRestore: (frame: NSRect, level: NSWindow.Level, minSize: NSSize)?
+    private var pipKeyMonitor: Any?
+    /// Нажатие мыши пришлось на элемент управления страницы (перемотка, меню): окно за него не двигаем. Сообщает страница.
+    private var pipPressOnControl = false
+    private var pipDrag: (mouse: NSPoint, origin: NSPoint, moving: Bool)?
+    var inPictureInPicture: Bool { pipRestore != nil }
+
+    /// Полный экран страницы (requestFullscreen) переключает окно целиком: видео играет в окне, а не в странице.
+    private func setWindowFullscreen(_ on: Bool) {
+        guard let window = view.window else { return }
+        let apply = {
+            if window.styleMask.contains(.fullScreen) != on { window.toggleFullScreen(nil) }
+            else { self.reportFullscreen(on) }
+        }
+        if on, pipRestore != nil {
+            endPictureInPicture(animated: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: apply)
+        } else { apply() }
+    }
+
+    /// Сообщает странице, в полном ли экране окно (в том числе после выхода зелёной кнопкой или Esc).
+    func reportFullscreen(_ on: Bool) {
+        webView.evaluateJavaScript("window.__setFullscreen&&window.__setFullscreen(\(on))", completionHandler: nil)
+    }
+
+    /// Выход из PiP перед закрытием приложения: иначе маленькое окно запомнится как обычное.
+    func endPictureInPicture(animated: Bool = true) { if pipRestore != nil { leavePictureInPicture(animated: animated) } }
+
+    /// Закрытие окна PiP: обычное окно возвращается, видео останавливается (так ведёт себя и системный PiP).
+    func closePictureInPicture() {
+        endPictureInPicture()
+        webView.evaluateJavaScript("window.Lampa && Lampa.Player && Lampa.Player.close()", completionHandler: nil)
+    }
+
+    private func setPipButtons(hidden: Bool, window: NSWindow) {
+        for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] { window.standardWindowButton(b)?.isHidden = hidden }
+    }
+
+    /// «Картинка в картинке»: окно уменьшается до 480×270 в правом нижнем углу экрана поверх остальных, без кнопок окна;
+    /// повторное нажатие кнопки, Esc возвращает прежний вид, ⌘W или закрытие окна ещё и останавливают видео. Полноэкранный режим (окна или элемента страницы) сначала закрывается.
+    private func togglePictureInPicture() {
+        guard let window = view.window else { return }
+        if pipRestore != nil { leavePictureInPicture(animated: true); return }
+        var wait = 0.0
+        if webView.fullscreenState != .notInFullscreen {
+            webView.evaluateJavaScript("document.webkitExitFullscreen && document.webkitExitFullscreen()", completionHandler: nil)
+            wait = 0.9
+        }
+        if window.styleMask.contains(.fullScreen) { window.toggleFullScreen(nil); wait = 1.2 }
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in self?.enterPictureInPicture() }
+    }
+
+    /// Без заголовка окно PiP двигается, когда мышь потащили (чистый клик остаётся кнопкам плеера).
+    private func pipMouse(_ event: NSEvent) -> NSEvent? {
+        guard let window = view.window, event.window === window else { return event }
+        // У краёв окна работает изменение размера.
+        let p = event.locationInWindow, b = window.frame.size, edge: CGFloat = 8
+        if event.type == .leftMouseDown, p.x < edge || p.y < edge || p.x > b.width - edge || p.y > b.height - edge {
+            pipDrag = nil
+            return event
+        }
+        switch event.type {
+        case .leftMouseDown:
+            pipPressOnControl = false
+            pipDrag = (NSEvent.mouseLocation, window.frame.origin, false)
+        case .leftMouseDragged:
+            guard let d = pipDrag, !pipPressOnControl else { return event }
+            let now = NSEvent.mouseLocation
+            let (dx, dy) = (now.x - d.mouse.x, now.y - d.mouse.y)
+            if d.moving || abs(dx) + abs(dy) > 6 {
+                pipDrag?.moving = true
+                window.setFrameOrigin(NSPoint(x: d.origin.x + dx, y: d.origin.y + dy))
+                return nil
+            }
+        case .leftMouseUp:
+            let moved = pipDrag?.moving ?? false
+            pipDrag = nil
+            if moved { return nil }
+        default: break
+        }
+        return event
+    }
+
+    private func leavePictureInPicture(animated: Bool) {
+        guard let saved = pipRestore, let window = view.window else { return }
+        pipRestore = nil
+        if let m = pipKeyMonitor { NSEvent.removeMonitor(m); pipKeyMonitor = nil }
+        setPipButtons(hidden: false, window: window)
+        window.titleVisibility = .visible
+        window.titlebarAppearsTransparent = false
+        window.styleMask.remove(.fullSizeContentView)
+        window.contentMinSize = saved.minSize
+        window.level = saved.level
+        window.setFrame(saved.frame, display: true, animate: animated)
+    }
+
+    private func enterPictureInPicture() {
+        guard pipRestore == nil, let window = view.window, !window.styleMask.contains(.fullScreen),
+              let area = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
+        pipRestore = (window.frame, window.level, window.contentMinSize)
+        window.contentMinSize = NSSize(width: 320, height: 180)
+        let size = NSSize(width: 480, height: 270)
+        let origin = NSPoint(x: area.maxX - size.width - 16, y: area.minY + 16)
+        window.level = .floating
+        setPipButtons(hidden: true, window: window)
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.styleMask.insert(.fullSizeContentView)
+        window.setFrame(NSRect(origin: origin, size: size), display: true, animate: true)
+        pipKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            guard let self, self.pipRestore != nil else { return event }
+            if event.type != .keyDown { return self.pipMouse(event) }
+            if event.keyCode == 53 { self.endPictureInPicture(); return nil }
+            if event.keyCode == 13 && event.modifierFlags.contains(.command) { self.closePictureInPicture(); return nil }
+            return event
+        }
     }
 
     /// Страница вместо чёрного окна, когда адрес сервера не загрузился.
@@ -257,6 +407,7 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loadingOwn = false
+        if view.window?.styleMask.contains(.fullScreen) == true { reportFullscreen(true) }
         guard let script = pendingRestore else { return }
         pendingRestore = nil
         let done = restoreDone

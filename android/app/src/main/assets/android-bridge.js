@@ -24,6 +24,7 @@
         port.postMessage(JSON.stringify({id, m: msg.m, a: msg.a}));
       });
     }};
+    window.__lampyrisPip = function () { window.webkit.messageHandlers.mpv.postMessage({m: 'pip', a: []}).catch(function () {}); };
     window.dispatchEvent(new Event('lampyris-ready'));
   });
 })();
