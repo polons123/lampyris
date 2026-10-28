@@ -37,6 +37,7 @@ use windows::Win32::Foundation::HWND;
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::UI::Controls::{TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TASKDIALOG_NOTIFICATIONS, TDF_ALLOW_DIALOG_CANCELLATION, TDF_ENABLE_HYPERLINKS, TDF_USE_COMMAND_LINKS, TDN_HYPERLINK_CLICKED};
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_YESNO};
+use wry::WebViewBuilderExtWindows;
 use wry::{DragDropEvent, NewWindowResponse, PageLoadEvent, WebContext, WebViewBuilder};
 
 /// События для главного потока (WebView принадлежит ему): всё остальное шлёт их через прокси.
@@ -464,6 +465,8 @@ fn main() {
     let mut wb = WebViewBuilder::new_with_web_context(&mut web_context)
         .with_transparent(true)
         .with_devtools(std::env::var_os("LAMPA_DEBUG").is_some())
+        // Стандартное меню WebView2 (печать, сохранить как…) на белом фоне в приложении не нужно; при отладке оно открывает инспектор.
+        .with_default_context_menus(std::env::var_os("LAMPA_DEBUG").is_some())
         .with_initialization_script(format!("window.__lv = {};", log::is_verbose()))
         .with_initialization_script(WINDOW_JS);
     if bridge.is_some() {
@@ -682,7 +685,7 @@ fn main() {
     let mut switcher = display_rate::Switcher::default();
     // Окно запоминаем не только при выходе: диспетчер задач или аварийный сбой не пришлют CloseRequested.
     // Положение и размер окна до входа в «картинку в картинке».
-    let mut pip_prev: Option<(PhysicalPosition<i32>, PhysicalSize<u32>, bool, bool)> = None;
+    let mut pip_prev: Option<(PhysicalPosition<i32>, PhysicalSize<u32>, bool, bool, bool)> = None;
     let mut win_dirty: Option<std::time::Instant> = None;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -762,11 +765,13 @@ fn main() {
                             } else {
                                 (window.outer_position().unwrap_or_default(), window.inner_size())
                             };
-                            pip_prev = Some((pos, size, was_max, window.is_always_on_top()));
+                            pip_prev = Some((pos, size, was_max, window.is_always_on_top(), was_full));
                             win_state.pip = true;
                             // Без меню и рамки окна: двигается перетаскиванием за картинку (см. window.js).
                             let _ = unsafe { menu.hide_for_hwnd(hwnd) };
                             window.set_decorations(false);
+                            // Минимум обычного окна больше PiP: иначе окно нельзя ни уменьшить, ни растянуть от размера PiP.
+                            window.set_min_inner_size(Some(tao::dpi::LogicalSize::new(240.0, 135.0)));
                             let scale = window.scale_factor();
                             let w = (480.0 * scale) as u32;
                             let h = (270.0 * scale) as u32;
@@ -779,19 +784,31 @@ fn main() {
                             window.set_always_on_top(true);
                             top_item.set_checked(true);
                         } else if !on {
-                            if let Some((pos, size, was_max, was_top)) = pip_prev.take() {
+                            if let Some((pos, size, was_max, was_top, was_full)) = pip_prev.take() {
                                 win_state.pip = false;
                                 window.set_decorations(true);
+                                window.set_min_inner_size(Some(tao::dpi::LogicalSize::new(MIN_WIDTH, MIN_HEIGHT)));
                                 if window.fullscreen().is_none() { let _ = unsafe { menu.show_for_hwnd(hwnd) }; }
                                 window.set_always_on_top(was_top);
                                 top_item.set_checked(was_top);
                                 window.set_inner_size(size);
                                 window.set_outer_position(pos);
                                 if was_max { window.set_maximized(true); }
+                                // Выход из PiP возвращает то, что было до него: если смотрели на весь экран, снова полный экран.
+                                if was_full { let _ = proxy.send_event(UserEvent::Window(vec![Value::from("fullscreen"), Value::Bool(true)])); }
                             }
                         }
                         is_pip.set(pip_prev.is_some());
                         let _ = webview.evaluate_script(&format!("window.__setPip&&window.__setPip({})", pip_prev.is_some()));
+                    }
+                    Some("resizeWindow") => {
+                        use tao::window::ResizeDirection as D;
+                        let dir = match args.get(1).and_then(|v| v.as_str()) {
+                            Some("n") => Some(D::North), Some("s") => Some(D::South), Some("e") => Some(D::East), Some("w") => Some(D::West),
+                            Some("ne") => Some(D::NorthEast), Some("nw") => Some(D::NorthWest), Some("se") => Some(D::SouthEast), Some("sw") => Some(D::SouthWest),
+                            _ => None,
+                        };
+                        if let (true, Some(d)) = (pip_prev.is_some(), dir) { let _ = window.drag_resize_window(d); }
                     }
                     Some("dragWindow") => { if pip_prev.is_some() { let _ = window.drag_window(); } }
                     Some("reload") => { let _ = proxy.send_event(UserEvent::Load); }

@@ -998,6 +998,46 @@
   // и отдаём нажатие приложению (window.__lampyrisPip задаёт каждая платформа).
   function installPipButton() {
     if (typeof window.__lampyrisPip !== "function") return;
+    // В PiP окно крошечное: от панели плеера остаются пауза и перемотка назад/вперёд, остальное прячется.
+    // Класс lampyris-pip ставит приложение (window.__setPip).
+    if (!document.getElementById("lampyris-pip-style")) {
+      const style = document.createElement("style");
+      style.id = "lampyris-pip-style";
+      style.textContent = `
+        html.lampyris-pip .player-panel { font-size: 0.8em; }
+        html.lampyris-pip .player-panel__line-two { justify-content: center; }
+        html.lampyris-pip .player-panel__timeline, html.lampyris-pip .player-panel__line-one, html.lampyris-pip .player-panel__iptv,
+        html.lampyris-pip .player-panel__apex,
+        html.lampyris-pip .player-panel__left, html.lampyris-pip .player-panel__right,
+        html.lampyris-pip .player-panel__center > *:not(.player-panel__playpause):not(.player-panel__seekbtn-box),
+        html.lampyris-pip .player-panel__seekbtn[data-key=start], html.lampyris-pip .player-panel__seekbtn[data-key=end],
+        html.lampyris-pip .player-info, html.lampyris-pip .player-footer, html.lampyris-pip .player-panel__mpvsubbox,
+        html.lampyris-pip .mpv-header, html.lampyris-pip .mpv-toast { display: none !important; }
+        html.lampyris-pip .player-panel__body { justify-content: center; }
+        html.lampyris-pip .player-panel__center { margin: 0 auto; }
+        .lampyris-pip-exit { display: none; }
+        html.lampyris-pip .lampyris-pip-exit { display: flex; position: fixed; top: 6px; right: 6px; z-index: 200; width: 28px; height: 28px;
+          align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 6px; color: #fff;
+          background: rgba(0,0,0,.55); cursor: pointer; opacity: 0; transition: opacity .15s; }
+        html.lampyris-pip:hover .lampyris-pip-exit, html.lampyris-pip .lampyris-pip-exit.focus { opacity: 1; }
+        .lampyris-pip-exit svg { width: 16px; height: 16px; }
+        html.lampyris-pip .mpv-skip { right: 4%; bottom: auto; top: 6%; font-size: 0.55em; padding: .4em 1em; }
+      `;
+      document.head.appendChild(style);
+    }
+    // Кнопка выхода из PiP (в обычное окно или на весь экран) в правом верхнем углу; видна, пока над окном мышь.
+    if (!document.querySelector(".lampyris-pip-exit")) {
+      const exit = document.createElement("button");
+      exit.className = "lampyris-pip-exit selector";
+      exit.title = "PiP";
+      exit.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></svg>';
+      exit.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); window.__lampyrisPip(); });
+      (document.body || document.documentElement).appendChild(exit);
+    }
+    // Двойной щелчок по окну тоже возвращает обычное окно.
+    window.addEventListener("dblclick", () => {
+      if (document.documentElement.classList.contains("lampyris-pip")) window.__lampyrisPip();
+    }, true);
     setInterval(() => {
       const btn = document.querySelector(".player-panel__pip");
       if (!btn) return;
@@ -2070,7 +2110,7 @@
       if (!play) return;
       const make = (d) => {
         const b = window.$(
-          `<div class="player-panel__seekbtn button selector"><svg viewBox="0 0 24 24" fill="currentColor">${SEEK_ICONS[d.key]}</svg><div class="tooltip"></div></div>`
+          `<div class="player-panel__seekbtn button selector" data-key="${d.key}"><svg viewBox="0 0 24 24" fill="currentColor">${SEEK_ICONS[d.key]}</svg><div class="tooltip"></div></div>`
         );
         b.find(".tooltip").text(d.tip);
         bindPlayerButton(b, () => {
@@ -3056,7 +3096,7 @@
         skip.segments = list;
         skip.tidb = list.length > 0;
         if (!skip.tidb) skipFromChapters();
-        console.log(`[tidb] tmdb=${q.id}${q.tv ? ` s${q.season}e${q.episode}` : ""}: сегментов ${list.length} (${list.map((x) => x.type).join(",")})`);
+        console.log(`[tidb] tmdb=${q.id}${q.tv ? ` s${q.season}e${q.episode}` : ""}: сегментов ${list.length} (${list.map((x) => `${x.type} ${x.start}-${x.end}`).join(", ")})`);
       } catch (e) {
         console.log(`[tidb] запрос не удался: ${e}`);
       }

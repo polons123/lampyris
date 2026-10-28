@@ -220,6 +220,8 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
 
     private var pipRestore: (frame: NSRect, level: NSWindow.Level, minSize: NSSize)?
     private var pipKeyMonitor: Any?
+    private var pipWasFullScreen = false
+    private var pipFrameName: NSWindow.FrameAutosaveName?
     /// Нажатие мыши пришлось на элемент управления страницы (перемотка, меню): окно за него не двигаем. Сообщает страница.
     private var pipPressOnControl = false
     private var pipDrag: (mouse: NSPoint, origin: NSPoint, moving: Bool)?
@@ -239,12 +241,17 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     }
 
     /// Сообщает странице, в полном ли экране окно (в том числе после выхода зелёной кнопкой или Esc).
+    /// Страница прячет лишнее в панели плеера, пока окно в режиме PiP.
+    func reportPip() {
+        webView.evaluateJavaScript("document.documentElement.classList.toggle('lampyris-pip',\(pipRestore != nil))", completionHandler: nil)
+    }
+
     func reportFullscreen(_ on: Bool) {
         webView.evaluateJavaScript("window.__setFullscreen&&window.__setFullscreen(\(on))", completionHandler: nil)
     }
 
     /// Выход из PiP перед закрытием приложения: иначе маленькое окно запомнится как обычное.
-    func endPictureInPicture(animated: Bool = true) { if pipRestore != nil { leavePictureInPicture(animated: animated) } }
+    func endPictureInPicture(animated: Bool = true, backToFullscreen: Bool = false) { if pipRestore != nil { leavePictureInPicture(animated: animated, backToFullscreen: backToFullscreen) } }
 
     /// Закрытие окна PiP: обычное окно возвращается, видео останавливается (так ведёт себя и системный PiP).
     func closePictureInPicture() {
@@ -260,8 +267,9 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     /// повторное нажатие кнопки, Esc возвращает прежний вид, ⌘W или закрытие окна ещё и останавливают видео. Полноэкранный режим (окна или элемента страницы) сначала закрывается.
     private func togglePictureInPicture() {
         guard let window = view.window else { return }
-        if pipRestore != nil { leavePictureInPicture(animated: true); return }
+        if pipRestore != nil { leavePictureInPicture(animated: true, backToFullscreen: true); return }
         var wait = 0.0
+        pipWasFullScreen = window.styleMask.contains(.fullScreen) || webView.fullscreenState != .notInFullscreen
         if webView.fullscreenState != .notInFullscreen {
             webView.evaluateJavaScript("document.webkitExitFullscreen && document.webkitExitFullscreen()", completionHandler: nil)
             wait = 0.9
@@ -301,7 +309,7 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         return event
     }
 
-    private func leavePictureInPicture(animated: Bool) {
+    private func leavePictureInPicture(animated: Bool, backToFullscreen: Bool = false) {
         guard let saved = pipRestore, let window = view.window else { return }
         pipRestore = nil
         if let m = pipKeyMonitor { NSEvent.removeMonitor(m); pipKeyMonitor = nil }
@@ -312,12 +320,25 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         window.contentMinSize = saved.minSize
         window.level = saved.level
         window.setFrame(saved.frame, display: true, animate: animated)
+        // Положение и размер окна снова запоминаются (в PiP они не пишутся, чтобы малый размер не стал обычным).
+        if let name = pipFrameName { window.setFrameAutosaveName(name); pipFrameName = nil }
+        reportPip()
+        // Выход из PiP возвращает прежний вид: если смотрели на весь экран, снова полный экран.
+        if backToFullscreen, pipWasFullScreen {
+            pipWasFullScreen = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + (animated ? 0.5 : 0.2)) { [weak self] in
+                guard let w = self?.view.window, !w.styleMask.contains(.fullScreen) else { return }
+                w.toggleFullScreen(nil)
+            }
+        }
     }
 
     private func enterPictureInPicture() {
         guard pipRestore == nil, let window = view.window, !window.styleMask.contains(.fullScreen),
               let area = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
         pipRestore = (window.frame, window.level, window.contentMinSize)
+        pipFrameName = window.frameAutosaveName
+        window.setFrameAutosaveName("")
         window.contentMinSize = NSSize(width: 320, height: 180)
         let size = NSSize(width: 480, height: 270)
         let origin = NSPoint(x: area.maxX - size.width - 16, y: area.minY + 16)
@@ -327,10 +348,11 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
         window.setFrame(NSRect(origin: origin, size: size), display: true, animate: true)
+        reportPip()
         pipKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self] event in
             guard let self, self.pipRestore != nil else { return event }
             if event.type != .keyDown { return self.pipMouse(event) }
-            if event.keyCode == 53 { self.endPictureInPicture(); return nil }
+            if event.keyCode == 53 { self.endPictureInPicture(backToFullscreen: true); return nil }
             if event.keyCode == 13 && event.modifierFlags.contains(.command) { self.closePictureInPicture(); return nil }
             return event
         }
@@ -408,6 +430,7 @@ final class WebViewController: NSViewController, WKNavigationDelegate, WKUIDeleg
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loadingOwn = false
         if view.window?.styleMask.contains(.fullScreen) == true { reportFullscreen(true) }
+        if pipRestore != nil { reportPip() }
         guard let script = pendingRestore else { return }
         pendingRestore = nil
         let done = restoreDone

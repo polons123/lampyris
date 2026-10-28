@@ -53,7 +53,7 @@
   }, true);
 
   var pipOn = false;
-  window.__setPip = function (on) { pipOn = !!on; };
+  window.__setPip = function (on) { pipOn = !!on; document.documentElement.classList.toggle("lampyris-pip", pipOn); };
   function togglePip() { send("window", ["pip", !pipOn]); }
   // Кнопку PiP плеера Lampa подключает mpvTube.js через эту функцию.
   window.__lampyrisPip = togglePip;
@@ -62,7 +62,22 @@
   var dragFrom = null;
   // Элементы управления (перемотка, меню, поля) окно не тащат: у них своё перетаскивание.
   var CONTROLS = ".player-panel, .selectbox, .settings, .modal, .keyboard-input, input, textarea, select, button, a";
+  // У окна без рамки края для растягивания рисуем сами: рядом с краем курсор меняется, нажатие начинает растягивание.
+  var EDGE = 8, CURSORS = { n: "ns-resize", s: "ns-resize", e: "ew-resize", w: "ew-resize", ne: "nesw-resize", sw: "nesw-resize", nw: "nwse-resize", se: "nwse-resize" };
+  function edgeAt(e) {
+    var d = (e.clientY < EDGE ? "n" : e.clientY >= innerHeight - EDGE ? "s" : "") + (e.clientX < EDGE ? "w" : e.clientX >= innerWidth - EDGE ? "e" : "");
+    return d || null;
+  }
+  window.addEventListener("mousemove", function (e) {
+    if (!pipOn) return;
+    var d = edgeAt(e);
+    document.documentElement.style.cursor = d ? CURSORS[d] : "";
+  }, true);
   window.addEventListener("mousedown", function (e) {
+    if (pipOn && e.button === 0) {
+      var d = edgeAt(e);
+      if (d) { e.preventDefault(); e.stopImmediatePropagation(); dragFrom = null; send("window", ["resizeWindow", d]); return; }
+    }
     var t = e.target && e.target.closest ? e.target : null;
     dragFrom = pipOn && e.button === 0 && !(t && t.closest(CONTROLS)) ? [e.screenX, e.screenY] : null;
   }, true);
