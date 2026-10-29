@@ -1,5 +1,6 @@
 import AppKit
 import MediaPlayer
+import LampyrisCore
 
 /// Медиаклавиши и «Сейчас играет» (Пункт управления, экран блокировки, наушники).
 /// Пауза и перемотка выполняются здесь (прямо в mpv); следующая и предыдущая серия передаются странице (Lampa.PlayerPlaylist).
@@ -77,7 +78,7 @@ final class NowPlaying {
         next[MPNowPlayingInfoPropertyMediaType] = MPNowPlayingInfoMediaType.video.rawValue
         info = next
         push(force: true)
-        if let artwork, let url = URL(string: artwork), url.scheme == "https", url != artworkURL {
+        if let artwork, let url = URL(string: artwork), RemoteMediaURL.artwork(url), url != artworkURL {
             artworkURL = url
             Task { await loadArtwork(url) }
         }
@@ -85,6 +86,9 @@ final class NowPlaying {
 
     func clear() {
         active = false
+        elapsed = 0
+        paused = false
+        lastPush = 0
         info = [:]
         artworkURL = nil
         let center = MPNowPlayingInfoCenter.default()
@@ -132,7 +136,7 @@ final class NowPlaying {
 
     private func loadArtwork(_ url: URL) async {
         let session = URLSession(configuration: .ephemeral)
-        guard let (data, response) = try? await LimitedFetch.data(for: URLRequest(url: url), limit: Self.maxArtworkBytes, session: session),
+        guard let (data, response) = try? await LimitedFetch.data(for: URLRequest(url: url), limit: Self.maxArtworkBytes, session: session, allowedURL: { RemoteMediaURL.artwork($0) }),
               (response as? HTTPURLResponse)?.statusCode == 200,
               (response.mimeType ?? "").hasPrefix("image/"), let image = NSImage(data: data), active,
               artworkURL == url else { return }  // ответ предыдущего фильма не должен заменить постер нового

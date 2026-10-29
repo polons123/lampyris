@@ -56,7 +56,9 @@ fn read() -> Value {
 
 fn write(v: &Value) {
     let _ = std::fs::create_dir_all(app_data_dir());
-    let _ = std::fs::write(file(), serde_json::to_string_pretty(v).unwrap_or_default());
+    if let Ok(bytes) = serde_json::to_vec_pretty(v) {
+        if let Err(e) = atomic_write(&file(), &bytes) { crate::log::warn("settings", &format!("не удалось сохранить настройки: {e}")); }
+    }
 }
 
 pub fn get_string(key: &str) -> Option<String> {
@@ -138,4 +140,60 @@ pub fn single_instance() -> bool {
 
 pub fn set_single_instance(on: bool) {
     set_value("singleInstance", Value::Bool(on));
+}
+
+/// Записываем рядом с целевым файлом и заменяем его только после полной записи.
+/// Межпроцессные конфликты значений это не устраняет, но прерванная запись не обнуляет старый файл.
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let parent = path.parent().ok_or_else(|| std::io::Error::other("missing parent"))?;
+    std::fs::create_dir_all(parent)?;
+    let (temp, mut file) = loop {
+        let temp = parent.join(format!(".lampyris-{}-{}.tmp", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&temp) {
+            Ok(file) => break (temp, file),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    };
+    let result = (|| {
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        #[cfg(windows)] {
+            use std::os::windows::ffi::OsStrExt;
+            use windows::core::PCWSTR;
+            use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH};
+            let from: Vec<u16> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
+            let to: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+            unsafe { MoveFileExW(PCWSTR(from.as_ptr()), PCWSTR(to.as_ptr()), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) }
+                .map_err(std::io::Error::other)
+        }
+        #[cfg(not(windows))] { std::fs::rename(&temp, path) }
+    })();
+    if result.is_err() { let _ = std::fs::remove_file(&temp); }
+    result
+}
+
+#[cfg(test)]
+mod atomic_tests {
+    use super::*;
+    #[test]
+    fn replaces_existing_file_and_preserves_it_on_failure() {
+        let dir = std::env::temp_dir().join(format!("lampyris-atomic-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        atomic_write(&path, b"old").unwrap();
+        atomic_write(&path, b"new").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        let target_dir = dir.join("directory");
+        std::fs::create_dir_all(&target_dir).unwrap();
+        assert!(atomic_write(&target_dir, b"invalid").is_err());
+        assert!(target_dir.is_dir());
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        assert!(!std::fs::read_dir(&dir).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

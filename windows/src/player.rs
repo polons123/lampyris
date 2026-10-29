@@ -165,6 +165,7 @@ impl Player {
     }
 
     pub fn stop(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
         self.command(&["stop"]);
     }
 

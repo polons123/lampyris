@@ -414,7 +414,7 @@ final class MpvPlayer {
         return mpv_command(h, &ptrs)
     }
 
-    func stop() { command(["stop"]) }
+    func stop() { openGeneration += 1; command(["stop"]) }
 
     /// Команда, отказ которой не считается ошибкой (например, снять фильтр, которого нет): событие `command-failed` не отправляется.
     func commandQuiet(_ args: [String]) { _ = commandStatus(args) }

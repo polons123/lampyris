@@ -65,7 +65,7 @@ pub fn write_text(text: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let body = if text.ends_with('\n') { text.to_string() } else { format!("{text}\n") };
-    std::fs::write(path, body)
+    crate::settings::atomic_write(&path, body.as_bytes())
 }
 
 impl MpvConfig {
@@ -350,5 +350,72 @@ mod tests {
         assert_eq!(cfg.profiles["fast"], vec![e("scale", "nearest", None)]);
         assert_eq!(names(&cfg.global), ["hwdec"]);
         assert!(!cfg.profiles["balanced"].is_empty());
+    }
+}
+
+/// Запись из страницы ограничена параметрами картинки и звука (PageConfig.swift).
+/// Пользовательский файл, изменённый вручную, разбирается прежним parse().
+pub fn is_safe_for_page(text: &str) -> bool {
+    if text.len() > MAX_BYTES { return false; }
+    let cfg = parse(text);
+    cfg.ignored.is_empty() && cfg.global.iter().chain(cfg.profiles.values().flatten()).all(|entry| {
+        if entry.op.is_some() || entry.value.chars().count() > 160 { return false; }
+        let v = entry.value.as_str();
+        match entry.name.as_str() {
+            "gamma" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= -100.0 && n <= 100.0),
+            "brightness" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= -100.0 && n <= 100.0),
+            "contrast" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= -100.0 && n <= 100.0),
+            "saturation" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= -100.0 && n <= 100.0),
+            "hue" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= -100.0 && n <= 100.0),
+            "volume" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0 && n <= 100.0),
+            "speed" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.25 && n <= 4.0),
+            "audio-delay" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= -30.0 && n <= 30.0),
+            "sub-delay" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= -120.0 && n <= 120.0),
+            "sub-scale" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.25 && n <= 4.0),
+            "sub-pos" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0 && n <= 150.0),
+            "sub-border-size" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0 && n <= 10.0),
+            "sub-shadow-offset" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0 && n <= 10.0),
+            "sub-margin-y" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0 && n <= 200.0),
+            "scale-antiring" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0 && n <= 1.0),
+            "cscale-antiring" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0 && n <= 1.0),
+            "deband-iterations" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 1.0 && n <= 16.0),
+            "deband-threshold" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0 && n <= 100.0),
+            "deband-range" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 1.0 && n <= 64.0),
+            "deband-grain" => v.parse::<f64>().is_ok_and(|n| n.is_finite() && n >= 0.0 && n <= 100.0),
+            "deband" => ["yes", "no"].contains(&v),
+            "correct-downscaling" => ["yes", "no"].contains(&v),
+            "linear-downscaling" => ["yes", "no"].contains(&v),
+            "sigmoid-upscaling" => ["yes", "no"].contains(&v),
+            "hdr-compute-peak" => ["yes", "no"].contains(&v),
+            "interpolation" => ["yes", "no"].contains(&v),
+            "mute" => ["yes", "no"].contains(&v),
+            "scale" => ["bilinear", "bicubic", "lanczos", "mitchell", "spline36", "ewa_lanczos", "ewa_lanczossharp"].contains(&v),
+            "cscale" => ["bilinear", "bicubic", "lanczos", "mitchell", "spline36", "ewa_lanczos", "ewa_lanczossharp"].contains(&v),
+            "dscale" => ["bilinear", "bicubic", "lanczos", "mitchell", "spline36", "ewa_lanczos", "ewa_lanczossharp"].contains(&v),
+            "tone-mapping" => ["auto", "clip", "mobius", "reinhard", "hable", "bt.2390", "gamma", "linear"].contains(&v),
+            "video-sync" => ["audio", "display-resample", "display-resample-vdrop", "display-vdrop"].contains(&v),
+            "tscale" => ["oversample", "linear", "box", "triangle"].contains(&v),
+            "dither-depth" => ["no", "auto", "8", "10", "12", "16"].contains(&v),
+            "target-peak" => ["auto", "100", "120", "200", "400", "600", "1000"].contains(&v),
+            "sub-border-style" => ["outline-and-shadow", "background-box", "opaque-box", "none"].contains(&v),
+            "sub-font" => ["sans-serif", "Arial", "Verdana", "Georgia", "Courier New"].contains(&v),
+            "hwdec" => ["auto", "auto-safe", "no", "videotoolbox", "d3d11va", "dxva2-copy"].contains(&v),
+            "af" => ["acompressor=ratio=4,loudnorm=I=-16:TP=-1.5:LRA=11"].contains(&v),
+            "sub-color" | "sub-back-color" => (v.len() == 7 || v.len() == 9) && v.starts_with('#') && v.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit),
+            _ => false,
+        }
+    })
+}
+
+#[cfg(test)]
+mod page_tests {
+    use super::*;
+    #[test]
+    fn safe_page_config() {
+        assert!(is_safe_for_page(crate::mpv_profiles::BUILTIN));
+        assert!(is_safe_for_page("volume=40\nsub-color=#FFFFFFFF\n[p]\nhwdec=auto-safe"));
+        for text in ["http-proxy=http://127.0.0.1", "tls-verify=no", "sub-file=/tmp/private", "vf=lavfi=movie=/tmp/private", "af=lavfi=amovie=/tmp/private", "volume=NaN", "volume=0x1p3", "volume=101", "speed=1e100", "scale=unknown", "vf-add=hflip", "include=/tmp/config", "[bad name]\nvolume=30"] {
+            assert!(!is_safe_for_page(text), "{text}");
+        }
     }
 }

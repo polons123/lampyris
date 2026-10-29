@@ -115,7 +115,7 @@ impl NowPlaying {
             let _ = u.Update();
         }
         self.push(true);
-        if let Some(url) = artwork.and_then(|a| url::Url::parse(a).ok()).filter(|u| u.scheme() == "https") {
+        if let Some(url) = artwork.and_then(|a| url::Url::parse(a).ok()).filter(http::artwork_url) {
             let changed = {
                 let mut st = self.state.lock().unwrap();
                 let changed = st.artwork.as_deref() != Some(url.as_str());
@@ -207,7 +207,7 @@ impl NowPlaying {
 
     /// Постер скачивает приложение (https, до 2 МБ, только изображение); ответ предыдущего фильма не заменяет постер нового.
     fn load_artwork(&self, url: &str) {
-        let Ok(data) = http::get(url, 10, MAX_ARTWORK_BYTES, false) else { return };
+        let Ok(data) = http::get_media(url, 10, MAX_ARTWORK_BYTES, http::artwork_url) else { return };
         let is_image = data.starts_with(&[0x89, b'P', b'N', b'G']) || data.starts_with(&[0xFF, 0xD8, 0xFF]) || data.starts_with(b"GIF8") || data.starts_with(b"BM");
         if !is_image {
             log::warn("smtc", "постер отклонён: не изображение");

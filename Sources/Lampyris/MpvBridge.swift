@@ -201,11 +201,10 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
 
     /// Скачивает субтитры (только https с *.strem.io, до 3 МБ) в кэш и подключает к mpv.
     private func loadSubtitle(urlString: String, title: String, lang: String) async -> [String: Any] {
-        guard let url = URL(string: urlString), url.scheme == "https", let host = url.host?.lowercased(),
-              host == "strem.io" || host.hasSuffix(".strem.io") else { return ["ok": false, "error": tr("недопустимый адрес", "invalid address")] }
+        guard let url = URL(string: urlString), RemoteMediaURL.subtitle(url) else { return ["ok": false, "error": tr("недопустимый адрес", "invalid address")] }
         let generation = player.openGeneration
         do {
-            let (data, response) = try await LimitedFetch.data(for: URLRequest(url: url, timeoutInterval: 15), limit: 3_000_000)
+            let (data, response) = try await LimitedFetch.data(for: URLRequest(url: url, timeoutInterval: 15), limit: 3_000_000, allowedURL: { RemoteMediaURL.subtitle($0) })
             guard (response as? HTTPURLResponse)?.statusCode == 200, data.count > 0 else {
                 return ["ok": false, "error": tr("не удалось скачать", "could not download")]
             }
@@ -269,7 +268,7 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
     }
 
     static func originKey(_ url: URL) -> String? {
-        guard let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased() else { return nil }
+        guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme), let host = url.host?.lowercased(), !host.isEmpty else { return nil }
         return "\(scheme)://\(host):\(url.port ?? (scheme == "https" ? 443 : 80))"
     }
 
@@ -375,6 +374,7 @@ final class MpvBridge: NSObject, WKScriptMessageHandlerWithReply {
         case "setConfig":
             guard let text = args.first as? String else { return replyHandler(nil, "no text") }
             if text.utf8.count > MpvConfig.maxBytes { return replyHandler(["ok": false, "error": tr("файл больше 64 КиБ", "the file is larger than 64 KiB")], nil) }
+            guard MpvConfig.isSafeForPage(text) else { return replyHandler(["ok": false, "error": tr("Запись из страницы разрешена только для безопасных параметров картинки и звука. Другие опции измените в файле mpv.conf.", "The page can save only safe picture and sound settings. Edit other options in the mpv.conf file.")], nil) }
             do { try MpvConfig.writeText(text) } catch { return replyHandler(["ok": false, "error": error.localizedDescription], nil) }
             let cfg = MpvConfig.merged(userText: text)
             replyHandler(["ok": true, "profiles": cfg.profileNames,

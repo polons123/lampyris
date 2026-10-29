@@ -74,7 +74,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback, MP
             List<Display.Mode> modes=new ArrayList<>();
             for(Display.Mode m:display.getSupportedModes())if(m.getPhysicalWidth()==current.getPhysicalWidth()&&m.getPhysicalHeight()==current.getPhysicalHeight())modes.add(m);
             float[] rates=new float[modes.size()];for(int i=0;i<rates.length;i++)rates[i]=modes.get(i).getRefreshRate();
-            float rate=DisplayRate.pick(fps,rates);if(Float.isNaN(rate))return;
+            float rate=DisplayRate.pick(fps,rates);if(Float.isNaN(rate)){if(attrs.preferredDisplayModeId!=0){attrs.preferredDisplayModeId=0;getWindow().setAttributes(attrs);}return;}
             for(Display.Mode m:modes)if(m.getRefreshRate()==rate){attrs.preferredDisplayModeId=m.getModeId();getWindow().setAttributes(attrs);break;}
         }catch(Exception ignored){}
     }

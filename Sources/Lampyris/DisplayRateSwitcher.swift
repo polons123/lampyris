@@ -32,7 +32,8 @@ final class DisplayRateSwitcher {
         }
         guard let rate = DisplayRate.pick(fps: fps, rates: modes.map(\.refreshRate)),
               let target = modes.first(where: { $0.refreshRate == rate }) else {
-            Log.log(.info, "display", "режима под \(fps) к/с нет: частота экрана не меняется")
+            Log.log(.info, "display", "режима под \(fps) к/с нет: возвращаем исходный режим")
+            restore()
             return
         }
         if let current = CGDisplayCopyDisplayMode(display), current.refreshRate == target.refreshRate, original == nil { return }

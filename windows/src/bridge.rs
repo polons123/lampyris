@@ -69,6 +69,7 @@ pub fn page_origin(u: &url::Url) -> Option<String> {
 
 /// «схема://хост:порт» адреса; None для внутренних (about:, data:).
 pub fn origin_key(u: &url::Url) -> Option<String> {
+    if !matches!(u.scheme(), "http" | "https") { return None; }
     let host = u.host_str()?.to_lowercase();
     Some(format!("{}://{}:{}", u.scheme().to_lowercase(), host, u.port_or_known_default()?))
 }
@@ -302,6 +303,9 @@ impl Bridge {
                 if text.len() > config::MAX_BYTES {
                     return reply(Ok(json!({"ok": false, "error": tr("файл больше 64 КиБ", "the file is larger than 64 KiB")})));
                 }
+                if !config::is_safe_for_page(text) {
+                    return reply(Ok(json!({"ok": false, "error": tr("Запись из страницы разрешена только для безопасных параметров картинки и звука. Другие опции измените в файле mpv.conf.", "The page can save only safe picture and sound settings. Edit other options in the mpv.conf file.")})));
+                }
                 if let Err(e) = config::write_text(text) {
                     return reply(Ok(json!({"ok": false, "error": e.to_string()})));
                 }
@@ -367,12 +371,11 @@ fn search_subtitles(imdb: &str, season: i64, episode: i64) -> String {
 /// Скачивает субтитры (только https с *.strem.io, до 3 МБ) в кэш и подключает к mpv.
 fn load_subtitle(player: &Player, url_str: &str, title: &str, lang: &str) -> Value {
     let Ok(url) = url::Url::parse(url_str) else { return json!({"ok": false, "error": tr("недопустимый адрес", "invalid address")}) };
-    let host = url.host_str().unwrap_or("").to_lowercase();
-    if url.scheme() != "https" || !(host == "strem.io" || host.ends_with(".strem.io")) {
+    if !http::subtitle_url(&url) {
         return json!({"ok": false, "error": tr("недопустимый адрес", "invalid address")});
     }
     let generation = player.generation();
-    let data = match http::get(url.as_str(), 15, MAX_SUBTITLE_BYTES, false) {
+    let data = match http::get_media(url.as_str(), 15, MAX_SUBTITLE_BYTES, http::subtitle_url) {
         Ok(d) if !d.is_empty() => d,
         _ => return json!({"ok": false, "error": tr("не удалось скачать", "could not download")}),
     };

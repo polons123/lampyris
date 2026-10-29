@@ -85,3 +85,58 @@ pub fn download(url: &str, dest: &std::path::Path, max_bytes: usize, mut progres
     }
     result
 }
+
+fn valid_media_url(u: &url::Url) -> bool {
+    u.scheme() == "https" && u.username().is_empty() && u.password().is_none() && u.port_or_known_default() == Some(443)
+}
+
+pub fn subtitle_url(u: &url::Url) -> bool {
+    valid_media_url(u) && u.host_str().is_some_and(|h| h == "strem.io" || h.ends_with(".strem.io"))
+}
+
+pub fn artwork_url(u: &url::Url) -> bool {
+    valid_media_url(u) && u.host_str() == Some("image.tmdb.org")
+}
+
+pub fn get_media(address: &str, timeout_secs: u64, max_bytes: usize, allowed: fn(&url::Url) -> bool) -> Result<Vec<u8>, String> {
+    let mut url = url::Url::parse(address).map_err(|e| e.to_string())?;
+    let tls = native_tls::TlsConnector::new().map_err(|e| e.to_string())?;
+    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(timeout_secs)).redirects(0).tls_connector(Arc::new(tls)).build();
+    for redirects in 0..=5 {
+        if !allowed(&url) { return Err("forbidden media URL".into()); }
+        let response = agent.get(url.as_str()).call().map_err(|e| e.to_string())?;
+        match response.status() {
+            301 | 302 | 303 | 307 | 308 => {
+                if redirects == 5 { return Err("too many redirects".into()); }
+                let location = response.header("Location").ok_or("missing redirect location")?;
+                url = url.join(location).map_err(|e| e.to_string())?;
+            }
+            200 => {
+                if response.header("Content-Length").and_then(|v| v.parse::<u64>().ok()).is_some_and(|n| n > max_bytes as u64) {
+                    return Err("response too large".into());
+                }
+                let mut data = Vec::new();
+                response.into_reader().take(max_bytes as u64 + 1).read_to_end(&mut data).map_err(|e| e.to_string())?;
+                if data.len() > max_bytes { return Err("response too large".into()); }
+                return Ok(data);
+            }
+            status => return Err(format!("HTTP {status}")),
+        }
+    }
+    Err("too many redirects".into())
+}
+
+#[cfg(test)]
+mod media_tests {
+    use super::*;
+    #[test]
+    fn media_hosts_and_redirect_targets() {
+        assert!(subtitle_url(&url::Url::parse("https://a.strem.io/sub.srt").unwrap()));
+        assert!(artwork_url(&url::Url::parse("https://image.tmdb.org/t/p/w500/p.jpg").unwrap()));
+        for text in ["http://a.strem.io/s", "https://strem.io.evil.example/s", "https://127.0.0.1/s", "https://a.strem.io:8443/s", "https://user:pass@a.strem.io/s", "file:///tmp/s"] {
+            let u = url::Url::parse(text).unwrap();
+            assert!(!subtitle_url(&u));
+            assert!(!artwork_url(&u));
+        }
+    }
+}

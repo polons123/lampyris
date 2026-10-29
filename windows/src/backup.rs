@@ -292,3 +292,15 @@ mod tests {
         assert_eq!(iso_utc(951_782_400), "2000-02-29T00:00:00Z");
     }
 }
+
+#[cfg(test)]
+mod origin_regression_tests {
+    use super::*;
+    #[test]
+    fn browser_origin_defaults_and_ipv6() {
+        assert_eq!(normalized_origin("http://EXAMPLE.org:80").as_deref(), Some("http://example.org"));
+        assert_eq!(normalized_origin("https://EXAMPLE.org:443/").as_deref(), Some("https://example.org"));
+        assert_eq!(normalized_origin("https://example.org:8443").as_deref(), Some("https://example.org:8443"));
+        assert_eq!(normalized_origin("http://[::1]:80").as_deref(), Some("http://[::1]"));
+    }
+}

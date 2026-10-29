@@ -16,10 +16,7 @@ enum ServerURL {
     }
 
     private static func parse(_ s: String) -> URL? {
-        var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        if t.isEmpty { return nil }
-        if !t.contains("://") { t = "http://" + t }
-        return URL(string: t)
+        Backup.normalizedServer(s).flatMap(URL.init(string:))
     }
 
     /// Диалог смены адреса (с текущим значением в поле); при отмене возвращает nil.

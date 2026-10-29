@@ -347,8 +347,8 @@
       },
       app_settings_mpv_skip: { ru: "Пропуск заставок (TheIntroDB)", en: "Skip intros (TheIntroDB)" },
       app_settings_mpv_skip_descr: {
-        ru: "Таймкоды заставок, пересказов, титров и анонсов из theintrodb.org (по TMDB-id, сезону и серии). «Кнопка» — показывать «Пропустить…» (клавиша N); «Автоматически» — сразу пропускать заставку и пересказ, а титры и анонс по кнопке. Данные есть не для всех видео.",
-        en: "Timestamps for intros, recaps, credits and previews from theintrodb.org (by TMDB id, season and episode). Button shows “Skip…” (N key); Automatic skips intros and recaps at once, credits and previews stay on the button. Not every video has data.",
+        ru: "Таймкоды заставок, пересказов, титров и анонсов из theintrodb.org (по TMDB-id, сезону и серии). «Кнопка» — показывать «Пропустить…» (клавиша N); «Автоматически» — сразу пропускать заставку, пересказ и титры, а анонс по кнопке. Данные есть не для всех видео.",
+        en: "Timestamps for intros, recaps, credits and previews from theintrodb.org (by TMDB id, season and episode). Button shows “Skip…” (N key); Automatic skips intros, recaps and credits at once, previews stay on the button. Not every video has data.",
       },
       app_settings_mpv_substyle_size: { ru: "Субтитры: размер", en: "Subtitles: size" },
       app_settings_mpv_substyle_pos: { ru: "Субтитры: положение", en: "Subtitles: position" },
@@ -390,6 +390,7 @@
       app_settings_mpv_subs_auto_en: { ru: "Авто: English", en: "Auto: English" },
       app_settings_mpv_skipped_intro: { ru: "Заставка пропущена", en: "Intro skipped" },
       app_settings_mpv_skipped_recap: { ru: "Пересказ пропущен", en: "Recap skipped" },
+      app_settings_mpv_skipped_credits: { ru: "Титры пропущены", en: "Credits skipped" },
       app_settings_mpv_skip_off: { ru: "Выключено", en: "Off" },
       app_settings_mpv_still: { ru: "Вопрос «Вы ещё смотрите?»", en: "“Are you still watching?”" },
       app_settings_mpv_still_descr: {
@@ -735,7 +736,6 @@
   }
 
   // Кнопка «Пропустить…» (заставка, пересказ, титры, анонс) внизу справа.
-  let skipHideTimer = null;
   function showSkipButton(text, onClick) {
     addUiStyle();
     let el = document.querySelector(".mpv-skip");
@@ -753,12 +753,9 @@
     el.appendChild(key);
     el.onclick = onClick;
     requestAnimationFrame(() => el.classList.add("is-shown"));
-    clearTimeout(skipHideTimer);
-    skipHideTimer = setTimeout(hideSkipButton, 12000);
   }
 
   function hideSkipButton() {
-    clearTimeout(skipHideTimer);
     const el = document.querySelector(".mpv-skip");
     if (!el) return;
     el.classList.remove("is-shown");
@@ -992,6 +989,22 @@
         window.$(host).before(btn);
       }, 300);
     }).catch(() => {});
+  }
+
+  // Пункт «Сегменты» в настройках плеера Lampa относится к её собственному плееру; пропуск заставок при mpv
+  // настраивается только в разделе «MPV», поэтому пока играет mpv, пункт из списка убирается.
+  function hideLampaSegments(L) {
+    if (!L.Select || typeof L.Select.show !== "function" || L.Select.__lampyrisSegments) return;
+    L.Select.__lampyrisSegments = true;
+    const show = L.Select.show;
+    L.Select.show = function (params) {
+      try {
+        if (params && Array.isArray(params.items) && document.documentElement.classList.contains(CLASS)) {
+          params.items = params.items.filter((item) => !(item && item.method === "segments"));
+        }
+      } catch (e) {}
+      return show.apply(this, arguments);
+    };
   }
 
   // Кнопка «картинка в картинке» плеера Lampa рассчитана на элемент video, а играет mpv: переименовываем её в PiP
@@ -2293,6 +2306,9 @@
        html.${CLASS} #app { visibility: hidden !important; }
        html.${CLASS} .wrap__left, html.${CLASS} .menu { visibility: hidden !important; opacity: 0 !important; pointer-events: none !important; }
        html.${CLASS} .player-info__values { display: none !important; }
+       /* Подсказка над курсором перекрывает текущий таймкод: фон должен полностью закрывать его цифры. */
+       html.${CLASS} .player-panel__time { background: #28282e !important; color: #fff !important; z-index: 2 !important;
+         -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
        html.${CLASS} .mpv-epline { font-size: 1.5em; margin-top: 0.25em; opacity: 0.85; text-shadow: 0 0 0.2em rgba(0, 0, 0, 0.5); }
        html.${CLASS} .player-video__overlay { display: none !important; background: none !important; }`;
     document.head.appendChild(style);
@@ -3137,13 +3153,15 @@
       if (!skip.segments.length) return;
       const mode = String(L.Storage.get(SKIP_SETTING, "button"));
       if (mode === "off") return;
-      const seg = skip.segments.find((x) => t >= x.start - 0.2 && t < skipEnd(x) - 1.5);
+      // Сегмент, из которого плейхед вышел (в том числе перемоткой назад), снова доступен для пропуска.
+      for (const d of skip.done) if (t < d.start - 0.2 || t >= skipEnd(d) - 0.2) skip.done.delete(d);
+      const seg = skip.segments.find((x) => t >= x.start - 0.2 && t < skipEnd(x));
       if (seg === skip.current) return;
       skip.current = seg || null;
       if (!seg) { skip.shownFor = null; return hideSkipButton(); }
-      if (mode === "auto" && (seg.type === "intro" || seg.type === "recap") && !skip.done.has(seg)) {
+      if (mode === "auto" && (seg.type === "intro" || seg.type === "recap" || seg.type === "credits") && !skip.done.has(seg)) {
         skipTo(seg);
-        showToast(L.Lang.translate(seg.type === "intro" ? "app_settings_mpv_skipped_intro" : "app_settings_mpv_skipped_recap"));
+        showToast(L.Lang.translate(seg.type === "intro" ? "app_settings_mpv_skipped_intro" : seg.type === "recap" ? "app_settings_mpv_skipped_recap" : "app_settings_mpv_skipped_credits"));
         return;
       }
       if (skip.shownFor !== seg && !skip.done.has(seg)) {
@@ -3152,7 +3170,7 @@
       }
     }
 
-    el.__skipNow = () => { if (skip.current) skipTo(skip.current); };
+    el.__skipNow = () => { if (skip.current && !skip.done.has(skip.current)) skipTo(skip.current); };
 
     // Вид субтитров из настроек «MPV»; mpv.conf применится позже (в open) и поэтому важнее.
     function applySubtitleStyle() {
@@ -3354,6 +3372,7 @@
     hideExternalMpv(L);
     installProfileHotkey(L);
     installPipButton();
+    hideLampaSegments(L);
     installActivityTracker();
     installArrowKeys(L);
     installPlayerKeys(L);

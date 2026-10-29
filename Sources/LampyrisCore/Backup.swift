@@ -42,7 +42,12 @@ public struct Backup: Equatable {
         guard let u = URLComponents(string: s), let scheme = u.scheme?.lowercased(), scheme == "http" || scheme == "https",
               let host = u.host, !host.isEmpty, u.user == nil, u.password == nil, u.query == nil, u.fragment == nil,
               u.path.isEmpty || u.path == "/" else { return nil }
-        return "\(scheme)://\(host)" + (u.port.map { ":\($0)" } ?? "")
+        let port = u.port
+        if let port, !(0...65535).contains(port) { return nil }
+        let canonicalHost = host.lowercased()
+        let authority = canonicalHost.contains(":") && !canonicalHost.hasPrefix("[") ? "[\(canonicalHost)]" : canonicalHost
+        let defaultPort = scheme == "https" ? 443 : 80
+        return "\(scheme)://\(authority)" + (port.flatMap { $0 == defaultPort ? nil : ":\($0)" } ?? "")
     }
 
     // MARK: Запись

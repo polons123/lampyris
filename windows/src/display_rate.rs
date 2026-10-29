@@ -67,7 +67,8 @@ impl Switcher {
         }
         let rates: Vec<f64> = modes.iter().map(|m| m.dmDisplayFrequency as f64).collect();
         let Some(rate) = pick(fps, &rates) else {
-            crate::log::info("display", &format!("режима под {fps} к/с нет: частота экрана не меняется"));
+            crate::log::info("display", &format!("режима под {fps} к/с нет: возвращаем исходный режим"));
+            self.restore();
             return;
         };
         if rate as u32 == current.dmDisplayFrequency && self.changed.is_none() {
