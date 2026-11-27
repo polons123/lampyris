@@ -1,0 +1,20 @@
+{
+  "assets": [
+    {
+      "filename": "Home.imagestack",
+      "idiom": "tv",
+      "role": "primary-app-icon",
+      "size": "400x240"
+    },
+    {
+      "filename": "Store.imagestack",
+      "idiom": "tv",
+      "role": "primary-app-icon",
+      "size": "1280x768"
+    }
+  ],
+  "info": {
+    "author": "xcode",
+    "version": 1
+  }
+}
